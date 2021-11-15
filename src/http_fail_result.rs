@@ -6,6 +6,7 @@ pub struct HttpFailResult {
     pub content_type: WebContentType,
     pub status_code: u16,
     pub content: Vec<u8>,
+    pub metric_it: bool,
 }
 
 impl HttpFailResult {
@@ -14,14 +15,16 @@ impl HttpFailResult {
             content_type: WebContentType::Text,
             content: format!("Query parameter '{}' is required", param_name).into_bytes(),
             status_code: 400,
+            metric_it: true,
         }
     }
 
-    pub fn as_not_found(text: String) -> Self {
+    pub fn as_not_found(text: String, metric_it: bool) -> Self {
         Self {
             content_type: WebContentType::Text,
             content: text.into_bytes(),
             status_code: 404,
+            metric_it,
         }
     }
 
@@ -34,6 +37,7 @@ impl HttpFailResult {
                 format!("Unauthorized request").into_bytes()
             },
             status_code: 401,
+            metric_it: true,
         }
     }
 }
@@ -54,6 +58,7 @@ impl From<UrlDecodeError> for HttpFailResult {
             status_code: 501,
             content_type: WebContentType::Text,
             content: format!("UrlDecodeError: {}", src.msg).into_bytes(),
+            metric_it: true,
         }
     }
 }
