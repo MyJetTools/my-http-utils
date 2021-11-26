@@ -84,3 +84,26 @@ impl QueryString {
         };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::QueryString;
+
+    #[test]
+    pub fn test_basic() {
+        let query_string = "tableName=deposit-restrictions&partitionKey=%2A&rowKey=1abfc";
+
+        let query_string = QueryString::new(query_string).unwrap();
+
+        let result = query_string
+            .get_query_optional_string_parameter("partitionKey")
+            .unwrap();
+
+        assert_eq!("*", result);
+
+        let result = query_string
+            .get_query_optional_string_parameter("rowKey")
+            .unwrap();
+        assert_eq!("1abfc", result);
+    }
+}
