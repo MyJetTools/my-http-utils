@@ -40,6 +40,19 @@ impl HttpFailResult {
             metric_it: true,
         }
     }
+
+    pub fn as_forbidden(text: Option<String>) -> Self {
+        Self {
+            content_type: WebContentType::Text,
+            content: if let Some(text) = text {
+                format!("Forbidden: {}", text).into_bytes()
+            } else {
+                format!("Forbidden").into_bytes()
+            },
+            status_code: 403,
+            metric_it: true,
+        }
+    }
 }
 
 impl Into<Response<Body>> for HttpFailResult {
