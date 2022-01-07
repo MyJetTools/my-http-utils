@@ -15,7 +15,7 @@ impl QueryString {
         Ok(result)
     }
 
-    pub fn get_query_required_string_parameter<'r, 't>(
+    pub fn get_required_string_parameter<'r, 't>(
         &'r self,
         name: &'t str,
     ) -> Result<&'r String, HttpFailResult> {
@@ -27,14 +27,11 @@ impl QueryString {
         }
     }
 
-    pub fn get_query_optional_string_parameter<'r, 't>(
-        &'r self,
-        name: &'t str,
-    ) -> Option<&'r String> {
+    pub fn get_optional_string_parameter<'r, 't>(&'r self, name: &'t str) -> Option<&'r String> {
         return self.query_string.get(name);
     }
 
-    pub fn get_query_bool_parameter<'r, 't>(&'r self, name: &'t str, default_value: bool) -> bool {
+    pub fn get_bool_parameter<'r, 't>(&'r self, name: &'t str, default_value: bool) -> bool {
         let result = self.query_string.get(name);
 
         match result {
@@ -49,7 +46,7 @@ impl QueryString {
         };
     }
 
-    pub fn get_query_optional_parameter<'r, 't, T: FromStr>(&'r self, name: &'t str) -> Option<T> {
+    pub fn get_optional_parameter<'r, 't, T: FromStr>(&'r self, name: &'t str) -> Option<T> {
         let result = self.query_string.get(name);
 
         match result {
@@ -65,7 +62,7 @@ impl QueryString {
         };
     }
 
-    pub fn get_query_required_parameter<'r, 't, T: FromStr>(
+    pub fn get_required_parameter<'r, 't, T: FromStr>(
         &'r self,
         name: &'t str,
     ) -> Result<T, HttpFailResult> {
@@ -96,13 +93,13 @@ mod tests {
         let query_string = QueryString::new(query_string).unwrap();
 
         let result = query_string
-            .get_query_optional_string_parameter("partitionKey")
+            .get_optional_string_parameter("partitionKey")
             .unwrap();
 
         assert_eq!("*", result);
 
         let result = query_string
-            .get_query_optional_string_parameter("rowKey")
+            .get_optional_string_parameter("rowKey")
             .unwrap();
         assert_eq!("1abfc", result);
     }
