@@ -45,7 +45,7 @@ impl HttpFailResult {
         Self {
             content_type: WebContentType::Text,
             content: if let Some(text) = text {
-                format!("Forbidden: {}", text).into_bytes()
+                text.into_bytes()
             } else {
                 format!("Forbidden").into_bytes()
             },
