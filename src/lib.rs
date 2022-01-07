@@ -1,7 +1,7 @@
 mod http_fail_result;
 mod http_headers;
 mod query_string;
-mod url_decoder;
+pub mod url_decoder;
 mod url_decoder_encoder;
 mod url_utils;
 mod web_content_type;
