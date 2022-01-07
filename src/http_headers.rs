@@ -15,4 +15,8 @@ impl<'s> HttpHeaders<'s> {
 
         Self { data }
     }
+
+    pub fn get(&self, header_name: &str) -> Option<&&str> {
+        self.data.get(header_name)
+    }
 }
