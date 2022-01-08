@@ -24,6 +24,8 @@ impl PathSegments {
             segments.push(path_segment);
         }
 
+        mark_last(&mut segments);
+
         Self {
             segments,
             keys_amount,
@@ -43,10 +45,17 @@ impl PathSegments {
                 continue;
             }
 
-            if let Some(segment) = self.segments.get(index) {
-                if let PathSegment::Path(segment) = segment {
-                    if segment != &path_segment.to_lowercase() {
-                        return false;
+            if let Some(the_path_segment) = self.segments.get(index) {
+                match the_path_segment {
+                    PathSegment::Path(the_path_segment) => {
+                        if the_path_segment != &path_segment.to_lowercase() {
+                            return false;
+                        }
+                    }
+                    PathSegment::Key { path_key: _, last } => {
+                        if *last {
+                            break;
+                        }
                     }
                 }
             } else {
@@ -72,7 +81,7 @@ impl PathSegments {
             }
 
             if let Some(segment) = self.segments.get(index) {
-                if let PathSegment::Key(path_key) = segment {
+                if let PathSegment::Key { path_key, last: _ } = segment {
                     if path_key == key {
                         return Some(path_segment);
                     }
@@ -85,6 +94,24 @@ impl PathSegments {
         }
 
         return None;
+    }
+}
+
+fn mark_last(segments: &mut Vec<PathSegment>) {
+    let mut index = segments.len() - 1;
+    loop {
+        match segments.get_mut(index).unwrap() {
+            PathSegment::Path(_) => break,
+            PathSegment::Key { path_key: _, last } => {
+                *last = true;
+            }
+        }
+
+        if index == 0 {
+            break;
+        }
+
+        index -= 1;
     }
 }
 #[cfg(test)]
@@ -113,5 +140,24 @@ mod test {
             false,
             path_segments.is_my_path("/Segment2/MyValue/Segment2")
         );
+    }
+
+    #[test]
+    fn test_last_marker() {
+        let result = PathSegments::new("/Segment1/{Key1}/Segment2/{Key2}");
+
+        let value = result.segments.get(1).unwrap();
+        if let PathSegment::Key { path_key: _, last } = value {
+            assert_eq!(false, *last);
+        } else {
+            panic!("Should not be gere")
+        }
+
+        let value = result.segments.get(3).unwrap();
+        if let PathSegment::Key { path_key: _, last } = value {
+            assert_eq!(true, *last);
+        } else {
+            panic!("Should not be gere")
+        }
     }
 }

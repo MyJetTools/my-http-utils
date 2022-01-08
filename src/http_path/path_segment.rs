@@ -1,6 +1,6 @@
 pub enum PathSegment {
     Path(String),
-    Key(String),
+    Key { path_key: String, last: bool },
 }
 
 impl PathSegment {
@@ -10,7 +10,10 @@ impl PathSegment {
         }
 
         if path_segment.starts_with("{") && path_segment.ends_with("}") {
-            return PathSegment::Key(path_segment[1..path_segment.len() - 1].to_string());
+            return PathSegment::Key {
+                path_key: path_segment[1..path_segment.len() - 1].to_string(),
+                last: false,
+            };
         }
 
         return PathSegment::Path(path_segment.to_lowercase());
@@ -19,7 +22,10 @@ impl PathSegment {
     pub fn is_key(&self) -> bool {
         match self {
             PathSegment::Path(_) => false,
-            PathSegment::Key(_) => true,
+            PathSegment::Key {
+                path_key: _,
+                last: _,
+            } => true,
         }
     }
 }
@@ -43,11 +49,6 @@ mod test {
     #[test]
     fn test_segment_as_key() {
         let result = PathSegment::new("{Test}");
-
-        if let PathSegment::Key(path) = result {
-            assert_eq!("Test", path)
-        } else {
-            panic!("Should not be here")
-        }
+        assert_eq!(true, result.is_key());
     }
 }
