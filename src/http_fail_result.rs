@@ -28,6 +28,15 @@ impl HttpFailResult {
         }
     }
 
+    pub fn as_path_parameter_required(param_name: &str) -> Self {
+        Self {
+            content_type: WebContentType::Text,
+            content: format!("Path parameter '{}' is required", param_name).into_bytes(),
+            status_code: 400,
+            metric_it: true,
+        }
+    }
+
     pub fn as_not_found(text: String, metric_it: bool) -> Self {
         Self {
             content_type: WebContentType::Text,

@@ -5,14 +5,26 @@ use hyper::{Body, Method, Request};
 
 pub struct HttpContext {
     req: Request<Body>,
-    path: String,
+    path_lower_case: String,
     addr: SocketAddr,
 }
 
 impl HttpContext {
     pub fn new(req: Request<Body>, addr: SocketAddr) -> Self {
-        let path = req.uri().path().to_lowercase();
-        Self { req, path, addr }
+        let path_lower_case = req.uri().path().to_lowercase();
+        Self {
+            req,
+            path_lower_case,
+            addr,
+        }
+    }
+
+    pub fn get_path(&self) -> &str {
+        self.req.uri().path()
+    }
+
+    pub fn get_path_lower_case(&self) -> &str {
+        &self.path_lower_case
     }
 
     pub fn get_ip(&self) -> RequestIp {
@@ -66,10 +78,6 @@ impl HttpContext {
 
     pub fn get_method(&self) -> &Method {
         self.req.method()
-    }
-
-    pub fn get_path(&self) -> &str {
-        self.path.as_str()
     }
 
     pub fn get_query_string(&self) -> Result<QueryString, HttpFailResult> {

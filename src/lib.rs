@@ -2,6 +2,7 @@ mod http_ctx;
 mod http_fail_result;
 mod http_headers;
 mod http_ok_result;
+pub mod http_path;
 mod http_server;
 mod http_server_middleware;
 mod query_string;
