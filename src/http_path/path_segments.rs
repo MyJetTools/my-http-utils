@@ -1,6 +1,7 @@
 use super::path_segment::PathSegment;
 
 pub struct PathSegments {
+    pub path: String,
     pub segments: Vec<PathSegment>,
     pub keys_amount: usize,
 }
@@ -26,6 +27,7 @@ impl PathSegments {
         Self {
             segments,
             keys_amount,
+            path: path.to_string(),
         }
     }
 
