@@ -68,8 +68,8 @@ impl HttpContext {
         self.req.method()
     }
 
-    pub fn get_path(&self) -> String {
-        self.path.as_str().to_lowercase()
+    pub fn get_path(&self) -> &str {
+        self.path.as_str()
     }
 
     pub fn get_query_string(&self) -> Result<QueryString, HttpFailResult> {
