@@ -10,39 +10,34 @@ use std::sync::Arc;
 
 use crate::{HttpContext, HttpFailResult, HttpServerMiddleware};
 
-pub struct HttpServerData<TAppContext: Send + Sync + 'static> {
-    app: Arc<TAppContext>,
-    middlewares: Vec<Arc<dyn HttpServerMiddleware<TAppContext> + Send + Sync + 'static>>,
+pub struct HttpServerData {
+    middlewares: Vec<Arc<dyn HttpServerMiddleware + Send + Sync + 'static>>,
 }
 
-pub struct MyHttpServer<TAppContext: Send + Sync + 'static> {
+pub struct MyHttpServer {
     pub addr: SocketAddr,
-    pub app: Arc<TAppContext>,
-    middlewares: Vec<Arc<dyn HttpServerMiddleware<TAppContext> + Send + Sync + 'static>>,
+    middlewares: Vec<Arc<dyn HttpServerMiddleware + Send + Sync + 'static>>,
 }
 
-impl<TAppContext: Send + Sync + 'static> MyHttpServer<TAppContext> {
-    pub fn new(addr: SocketAddr, app: Arc<TAppContext>) -> Self {
+impl MyHttpServer {
+    pub fn new(addr: SocketAddr) -> Self {
         Self {
-            app,
             addr,
             middlewares: Vec::new(),
         }
     }
     pub fn add_middleware(
         &mut self,
-        middleware: Arc<dyn HttpServerMiddleware<TAppContext> + Send + Sync + 'static>,
+        middleware: Arc<dyn HttpServerMiddleware + Send + Sync + 'static>,
     ) {
         self.middlewares.push(middleware);
     }
 
     pub fn start<TAppStates>(&self, app_states: Arc<TAppStates>)
     where
-        TAppContext: Send + Sync + 'static,
         TAppStates: ApplicationStates + Send + Sync + 'static,
     {
         let http_server_data = HttpServerData {
-            app: self.app.clone(),
             middlewares: self.middlewares.clone(),
         };
 
@@ -54,12 +49,11 @@ impl<TAppContext: Send + Sync + 'static> MyHttpServer<TAppContext> {
     }
 }
 
-pub async fn start<TAppContext, TAppStates>(
+pub async fn start<TAppStates>(
     addr: SocketAddr,
-    http_server_data: Arc<HttpServerData<TAppContext>>,
+    http_server_data: Arc<HttpServerData>,
     app_states: Arc<TAppStates>,
 ) where
-    TAppContext: Send + Sync + 'static,
     TAppStates: ApplicationStates + Send + Sync + 'static,
 {
     let http_server_data_spawned = http_server_data.clone();
@@ -84,15 +78,15 @@ pub async fn start<TAppContext, TAppStates>(
     }
 }
 
-pub async fn handle_requests<TAppContext: Send + Sync + 'static>(
+pub async fn handle_requests(
     req: Request<Body>,
-    http_server_data: Arc<HttpServerData<TAppContext>>,
+    http_server_data: Arc<HttpServerData>,
     addr: SocketAddr,
 ) -> hyper::Result<Response<Body>> {
     let mut ctx = HttpContext::new(req, addr);
 
     for middleware in &http_server_data.middlewares {
-        match middleware.handle_request(ctx, &http_server_data.app).await {
+        match middleware.handle_request(ctx).await {
             Ok(result) => match result {
                 crate::MiddleWareResult::Ok(ok_result) => {
                     return Ok(ok_result.into());
