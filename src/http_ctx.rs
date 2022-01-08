@@ -42,6 +42,24 @@ impl HttpContext {
         }
     }
 
+    pub fn get_value_from_path_optional(&self, key: &str) -> Result<Option<&str>, HttpFailResult> {
+        let path = self.get_path();
+
+        if self.route.is_none() {
+            return Err(HttpFailResult::as_forbidden(Some(format!(
+                "Path [{}] does not has keys in it",
+                path
+            ))));
+        }
+
+        let route = self.route.as_ref().unwrap();
+
+        match route.get_value(path, key) {
+            Some(value) => Ok(Some(value)),
+            None => Ok(None),
+        }
+    }
+
     pub fn get_path(&self) -> &str {
         self.req.uri().path()
     }
