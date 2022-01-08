@@ -17,12 +17,14 @@ pub struct HttpServerData<TAppContext: Send + Sync + 'static> {
 
 pub struct MyHttpServer<TAppContext: Send + Sync + 'static> {
     pub addr: SocketAddr,
+    pub app: Arc<TAppContext>,
     middlewares: Vec<Arc<dyn HttpServerMiddleware<TAppContext> + Send + Sync + 'static>>,
 }
 
 impl<TAppContext: Send + Sync + 'static> MyHttpServer<TAppContext> {
-    pub fn new(addr: SocketAddr) -> Self {
+    pub fn new(addr: SocketAddr, app: Arc<TAppContext>) -> Self {
         Self {
+            app,
             addr,
             middlewares: Vec::new(),
         }
@@ -34,13 +36,13 @@ impl<TAppContext: Send + Sync + 'static> MyHttpServer<TAppContext> {
         self.middlewares.push(middleware);
     }
 
-    pub fn start<TAppStates>(&self, app: Arc<TAppContext>, app_states: Arc<TAppStates>)
+    pub fn start<TAppStates>(&self, app_states: Arc<TAppStates>)
     where
         TAppContext: Send + Sync + 'static,
         TAppStates: ApplicationStates + Send + Sync + 'static,
     {
         let http_server_data = HttpServerData {
-            app,
+            app: self.app.clone(),
             middlewares: self.middlewares.clone(),
         };
 
