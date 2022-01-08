@@ -1,12 +1,13 @@
 use std::net::SocketAddr;
 
-use crate::{HttpFailResult, QueryString, RequestIp, WebContentType};
+use crate::{http_path::PathSegments, HttpFailResult, QueryString, RequestIp, WebContentType};
 use hyper::{Body, Method, Request};
 
 pub struct HttpContext {
     req: Request<Body>,
     path_lower_case: String,
     addr: SocketAddr,
+    pub route: Option<PathSegments>,
 }
 
 impl HttpContext {
@@ -16,6 +17,28 @@ impl HttpContext {
             req,
             path_lower_case,
             addr,
+            route: None,
+        }
+    }
+
+    pub fn get_value_from_path(&self, key: &str) -> Result<&str, HttpFailResult> {
+        let path = self.get_path();
+
+        if self.route.is_none() {
+            return Err(HttpFailResult::as_forbidden(Some(format!(
+                "Path [{}] does not has keys in it",
+                path
+            ))));
+        }
+
+        let route = self.route.as_ref().unwrap();
+
+        match route.get_value(path, key) {
+            Some(value) => Ok(value),
+            None => Err(HttpFailResult::as_forbidden(Some(format!(
+                "Route [{}] does not have key[{}]",
+                route.path, key
+            )))),
         }
     }
 
