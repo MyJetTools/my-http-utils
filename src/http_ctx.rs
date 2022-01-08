@@ -1,15 +1,33 @@
-use crate::{HttpFailResult, QueryString, WebContentType};
+use std::net::SocketAddr;
+
+use crate::{HttpFailResult, QueryString, RequestIp, WebContentType};
 use hyper::{Body, Method, Request};
 
 pub struct HttpContext {
     req: Request<Body>,
     path: String,
+    addr: SocketAddr,
 }
 
 impl HttpContext {
-    pub fn new(req: Request<Body>) -> Self {
+    pub fn new(req: Request<Body>, addr: SocketAddr) -> Self {
         let path = req.uri().path().to_lowercase();
-        Self { req, path }
+        Self { req, path, addr }
+    }
+
+    pub fn get_ip(&self) -> RequestIp {
+        let headers = self.req.headers();
+        let ip_header = headers.get("X-Forwarded-For");
+
+        if let Some(ip_value) = ip_header {
+            let forwared_ip = std::str::from_utf8(ip_value.as_bytes()).unwrap();
+
+            let result: Vec<&str> = forwared_ip.split(",").map(|itm| itm.trim()).collect();
+
+            return RequestIp::Forwarded(result);
+        }
+
+        return RequestIp::Result(self.addr.to_string());
     }
 
     pub fn get_required_header(&self, header_name: &str) -> Result<&str, HttpFailResult> {
