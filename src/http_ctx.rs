@@ -1,6 +1,9 @@
 use std::net::SocketAddr;
 
-use crate::{http_path::PathSegments, HttpFailResult, QueryString, RequestIp, WebContentType};
+use crate::{
+    http_path::{GetPathValueResult, PathSegments},
+    HttpFailResult, QueryString, RequestIp, WebContentType,
+};
 use hyper::{Body, Method, Request};
 
 pub struct HttpContext {
@@ -34,10 +37,15 @@ impl HttpContext {
         let route = self.route.as_ref().unwrap();
 
         match route.get_value(path, key) {
-            Some(value) => Ok(value),
-            None => Err(HttpFailResult::as_forbidden(Some(format!(
-                "Route [{}] does not have key[{}]",
-                route.path, key
+            GetPathValueResult::Value(value) => Ok(value),
+            GetPathValueResult::NoKeyInTheRoute => Err(HttpFailResult::as_forbidden(Some(
+                format!("Route [{}] does not have key[{}]", route.path, key),
+            ))),
+            GetPathValueResult::NoValue => Err(HttpFailResult::as_forbidden(Some(format!(
+                "Route [{}] does not have value for the path [{}] with the key [{}]",
+                route.path,
+                self.get_path(),
+                key
             )))),
         }
     }
@@ -55,8 +63,11 @@ impl HttpContext {
         let route = self.route.as_ref().unwrap();
 
         match route.get_value(path, key) {
-            Some(value) => Ok(Some(value)),
-            None => Ok(None),
+            GetPathValueResult::Value(value) => Ok(Some(value)),
+            GetPathValueResult::NoValue => Ok(None),
+            GetPathValueResult::NoKeyInTheRoute => Err(HttpFailResult::as_forbidden(Some(
+                format!("Route [{}] does not have key[{}]", route.path, key),
+            ))),
         }
     }
 

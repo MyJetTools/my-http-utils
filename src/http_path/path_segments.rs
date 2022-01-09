@@ -1,5 +1,37 @@
 use super::path_segment::PathSegment;
 
+pub enum GetPathValueResult<'s> {
+    NoKeyInTheRoute,
+    NoValue,
+    Value(&'s str),
+}
+
+impl<'s> GetPathValueResult<'s> {
+    pub fn is_no_key(&'s self) -> bool {
+        match self {
+            GetPathValueResult::NoKeyInTheRoute => true,
+            GetPathValueResult::NoValue => false,
+            GetPathValueResult::Value(_) => false,
+        }
+    }
+
+    pub fn is_no_value(&'s self) -> bool {
+        match self {
+            GetPathValueResult::NoKeyInTheRoute => false,
+            GetPathValueResult::NoValue => true,
+            GetPathValueResult::Value(_) => false,
+        }
+    }
+
+    pub fn unwrap(&'s self) -> &'s str {
+        match self {
+            GetPathValueResult::NoKeyInTheRoute => panic!("No key in the search result"),
+            GetPathValueResult::NoValue => panic!("No value in the search result"),
+            GetPathValueResult::Value(value) => value,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PathSegments {
     pub path: String,
@@ -69,9 +101,9 @@ impl PathSegments {
         return true;
     }
 
-    pub fn get_value<'s>(&self, path: &'s str, key: &str) -> Option<&'s str> {
+    pub fn get_value<'s>(&self, path: &'s str, key: &str) -> GetPathValueResult<'s> {
         if self.keys_amount == 0 {
-            return None;
+            return GetPathValueResult::NoKeyInTheRoute;
         }
 
         let mut index = 0;
@@ -84,17 +116,17 @@ impl PathSegments {
             if let Some(segment) = self.segments.get(index) {
                 if let PathSegment::Key { path_key, last: _ } = segment {
                     if path_key == key {
-                        return Some(path_segment);
+                        return GetPathValueResult::Value(path_segment);
                     }
                 }
             } else {
-                return None;
+                return GetPathValueResult::NoKeyInTheRoute;
             }
 
             index += 1;
         }
 
-        return None;
+        return GetPathValueResult::NoValue;
     }
 }
 
@@ -160,5 +192,16 @@ mod test {
         } else {
             panic!("Should not be gere")
         }
+    }
+
+    #[test]
+    fn test_is_my_path_with_last_key() {
+        let path_segments = PathSegments::new("/Segment1/Segment2/{Key1}");
+
+        assert_eq!(true, path_segments.is_my_path("/Segment1/Segment2"));
+
+        let value = path_segments.get_value("/Segment1/Segment2", "Key1");
+
+        assert_eq!(true, value.is_no_value());
     }
 }
