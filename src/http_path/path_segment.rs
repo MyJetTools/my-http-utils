@@ -1,3 +1,4 @@
+#[derive(Debug, Clone)]
 pub enum PathSegment {
     Path(String),
     Key { path_key: String, last: bool },

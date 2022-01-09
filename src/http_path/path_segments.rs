@@ -1,5 +1,6 @@
 use super::path_segment::PathSegment;
 
+#[derive(Debug, Clone)]
 pub struct PathSegments {
     pub path: String,
     pub segments: Vec<PathSegment>,
