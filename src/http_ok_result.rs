@@ -20,25 +20,25 @@ pub enum HttpOkResult {
 }
 
 impl HttpOkResult {
-    pub fn create_json_response<T: Serialize>(model: T) -> Result<HttpOkResult, HttpFailResult> {
+    pub fn create_json_response<T: Serialize>(model: T) -> HttpOkResult {
         let json = serde_json::to_vec(&model).unwrap();
-        Ok(HttpOkResult::Content {
+        HttpOkResult::Content {
             content_type: Some(WebContentType::Json),
             content: json,
-        })
+        }
     }
 
-    pub fn create_as_usize(number: usize) -> Result<HttpOkResult, HttpFailResult> {
-        Ok(HttpOkResult::Content {
+    pub fn create_as_usize(number: usize) -> HttpOkResult {
+        HttpOkResult::Content {
             content_type: Some(WebContentType::Text),
             content: number.to_string().into_bytes(),
-        })
+        }
     }
 
-    pub fn redirect(src: &str) -> Result<HttpOkResult, HttpFailResult> {
-        Ok(HttpOkResult::Redirect {
+    pub fn redirect(src: &str) -> HttpOkResult {
+        HttpOkResult::Redirect {
             url: src.to_string(),
-        })
+        }
     }
 }
 
@@ -48,6 +48,12 @@ impl Into<HttpOkResult> for String {
             content_type: Some(WebContentType::Text),
             content: self.into_bytes(),
         }
+    }
+}
+
+impl Into<Result<HttpOkResult, HttpFailResult>> for HttpOkResult {
+    fn into(self) -> Result<HttpOkResult, HttpFailResult> {
+        Ok(self)
     }
 }
 
