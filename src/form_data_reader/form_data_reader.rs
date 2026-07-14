@@ -7,7 +7,11 @@ pub struct FormDataReader<'s> {
 }
 
 impl<'s> FormDataReader<'s> {
-    pub fn new(content: &'s [u8], boundary: &'s str) -> Self {
+    // `boundary` gets an independent lifetime: it is only read while splitting the content
+    // (and copied into an owned `ShortString` inside `ContentIterator`), never retained in a
+    // `FormDataItem`. This lets callers pass a short-lived boundary (e.g. one owned by a
+    // `BodyContentType`) while the reader keeps borrowing only `content`.
+    pub fn new<'b>(content: &'s [u8], boundary: &'b str) -> Self {
         let mut data = Vec::new();
 
         for chunk in ContentIterator::new(content, boundary) {

@@ -18,6 +18,12 @@ pub mod body;
 pub mod form_data_reader;
 pub mod schema;
 
+/// Server-independent HTTP request parsing (value type, conversions, error, body readers and the
+/// `THttpRequest` abstraction) plus the runtime the derive-generated `parse` targets. Gated
+/// behind the `server` feature so wasm clients that only build requests don't compile it.
+#[cfg(feature = "server")]
+pub mod http_input;
+
 /// Derive & attribute macros for HTTP request models (`MyHttpInput`, `MyHttpObjectStructure`,
 /// `MyHttpInputObjectStructure`, `MyHttpStringEnum`, `MyHttpIntegerEnum`, `http_input_field`).
 ///

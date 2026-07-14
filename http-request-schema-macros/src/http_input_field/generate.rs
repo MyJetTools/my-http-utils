@@ -51,18 +51,43 @@ pub fn generate(attr: TokenStream, input: TokenStream) -> Result<TokenStream, sy
 
     let tp = &tuple_struct.type_ident;
 
+    // Server-side conversion from a parsed request value — reads the value as a String and wraps
+    // it. Only emitted with the `server` feature (it references the server-gated `http_input`).
+    let try_from_input = if cfg!(feature = "server") {
+        quote::quote! {
+            impl<'s> std::convert::TryFrom<my_http_utils::http_input::HttpInputValue<'s>> for #struct_name {
+                type Error = my_http_utils::http_input::HttpParseError;
+                fn try_from(
+                    __value: my_http_utils::http_input::HttpInputValue<'s>,
+                ) -> Result<Self, Self::Error> {
+                    Ok(Self::new(__value.as_string()?))
+                }
+            }
+        }
+    } else {
+        quote::quote!()
+    };
+
+    // Schema description of the field's type — OpenAPI/Swagger, server only.
+    let data_type_provider = if cfg!(feature = "server") {
+        quote::quote! {
+            impl my_http_utils::schema::data_types::DataTypeProvider for #struct_name {
+                fn get_data_type() -> my_http_utils::schema::data_types::HttpDataType {
+                    my_http_utils::schema::data_types::HttpDataType::SimpleType(
+                        my_http_utils::schema::data_types::HttpSimpleType::#simple_type,
+                    )
+                }
+            }
+        }
+    } else {
+        quote::quote!()
+    };
+
     let result = quote::quote! {
         #[derive(Debug)]
         #src
 
-        // Schema description of the field's type.
-        impl  my_http_utils::schema::data_types::DataTypeProvider for #struct_name {
-            fn get_data_type() -> my_http_utils::schema::data_types::HttpDataType {
-                my_http_utils::schema::data_types::HttpDataType::SimpleType(
-                    my_http_utils::schema::data_types::HttpSimpleType::#simple_type,
-                )
-            }
-        }
+        #data_type_provider
 
             impl #struct_name {
                 pub fn new(value: impl Into<#tp>) -> Self {
@@ -81,6 +106,7 @@ pub fn generate(attr: TokenStream, input: TokenStream) -> Result<TokenStream, sy
                 }
             }
 
+            #try_from_input
     };
 
     Ok(result.into())

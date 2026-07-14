@@ -9,6 +9,9 @@ edition = "2021"
 publish = false
 
 [dependencies]
-my-http-utils = { path = ".." }
+# `server` is enabled so the parse-side tests can exercise the derive-generated `parse`
+# and the `my_http_utils::http_input` runtime. The client-builder tests are unaffected.
+my-http-utils = { path = "..", features = ["server"] }
 serde = { version = "*", features = ["derive"] }
 serde_json = { version = "*" }
+rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }

@@ -41,22 +41,57 @@ pub fn generate(ast: &syn::DeriveInput, debug: &mut bool) -> Result<TokenStream,
         Err(err) => err.to_compile_error(),
     };
 
-    // Two abstract halves from the same markup: schema description (`get_input_params` /
-    // `get_model_routes`) and the client request builder (`THttpRequestBuilder`).
-    let result = quote! {
-        impl #struct_name{
-            pub fn get_input_params()->Vec<#http_input_param>{
-                #http_input
-            }
+    // Server-side sync `parse` + `READS_BODY` — only under the `server` feature (see
+    // `generate_parse_impl`); empty otherwise, keeping the client / wasm build lean.
+    let parse_impl = match generate_parse_impl(struct_name, &input_fields) {
+        Ok(result) => result,
+        Err(err) => err.to_compile_error(),
+    };
 
-            pub fn get_model_routes()->Option<Vec<&'static str>>{
-                #http_routes
+    // Schema description (`get_input_params` / `get_model_routes`) is an OpenAPI/Swagger concern
+    // — server only. Browser clients get just the request builder, so their bundles stay small.
+    let schema_impl = if cfg!(feature = "server") {
+        quote! {
+            impl #struct_name{
+                pub fn get_input_params()->Vec<#http_input_param>{
+                    #http_input
+                }
+
+                pub fn get_model_routes()->Option<Vec<&'static str>>{
+                    #http_routes
+                }
             }
         }
+    } else {
+        quote!()
+    };
+
+    // Three halves from the same markup: schema description (server), the client request builder
+    // (`THttpRequestBuilder`, always), and — on the server — the sync `parse`.
+    let result = quote! {
+        #schema_impl
 
         #client_writer
+
+        #parse_impl
     };
     Ok(result.into())
+}
+
+#[cfg(feature = "server")]
+fn generate_parse_impl(
+    struct_name: &syn::Ident,
+    input_fields: &HttpInputProperties,
+) -> Result<proc_macro2::TokenStream, syn::Error> {
+    super::parse::generate_parse(struct_name, input_fields)
+}
+
+#[cfg(not(feature = "server"))]
+fn generate_parse_impl(
+    _struct_name: &syn::Ident,
+    _input_fields: &HttpInputProperties,
+) -> Result<proc_macro2::TokenStream, syn::Error> {
+    Ok(quote!())
 }
 
 fn http_routes(props: &HttpInputProperties) -> Result<Vec<proc_macro2::TokenStream>, syn::Error> {

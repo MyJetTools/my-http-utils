@@ -2,6 +2,9 @@
 //! re-export (never the proc-macro crate directly), exactly as external consumers would.
 
 #[cfg(test)]
+mod parse_tests;
+
+#[cfg(test)]
 mod tests {
     use serde::Serialize;
     use my_http_utils::body::HttpRequestBody;

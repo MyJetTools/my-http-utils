@@ -7,6 +7,12 @@ pub fn generate(
     ast: &syn::DeriveInput,
     debug: &mut bool,
 ) -> Result<proc_macro::TokenStream, syn::Error> {
+    // `MyHttpObjectStructure` is OpenAPI/Swagger schema only — server concern. Emit nothing for
+    // client (default) builds so browser bundles stay small.
+    if !cfg!(feature = "server") {
+        return Ok(proc_macro::TokenStream::new());
+    }
+
     let struct_name = &ast.ident;
 
     let fields = StructProperty::read(ast)?;

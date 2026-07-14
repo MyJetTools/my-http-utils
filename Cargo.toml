@@ -10,6 +10,11 @@ edition = "2021"
 
 [features]
 default = []
+# Server-side request parsing (`http_input` module + the derive-generated sync `parse` /
+# `READS_BODY`). Off by default so wasm clients pull only the schema + client request builder.
+# The whole `http_input` layer is wasm-safe (no hyper/tokio), so enabling `server` still
+# compiles for `wasm32-unknown-unknown` — it is simply not needed by browser clients.
+server = ["http-request-schema-macros/server"]
 
 [dependencies]
 rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }

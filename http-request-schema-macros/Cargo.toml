@@ -8,6 +8,13 @@ edition = "2021"
 [lib]
 proc-macro = true
 
+[features]
+default = []
+# When enabled (via `my-http-utils/server`), the `MyHttpInput` derive additionally emits the
+# server-independent sync `parse` + `READS_BODY`. Kept off by default so wasm clients get only
+# the schema and client request builder.
+server = []
+
 # Emits only abstract, model-describing code: the schema (`DataTypeProvider`, input params)
 # and the client request builder (`THttpRequestBuilder`). No server/client split — server
 # codegen (request parsing, controllers, `http_route`) lives in my-http-server.

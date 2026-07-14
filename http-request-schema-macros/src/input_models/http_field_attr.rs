@@ -25,6 +25,21 @@ impl<'s> HttpFieldAttribute<'s> {
         }
     }
 
+    /// The parsed `default = …` value, if any — used by the server-side `parse` codegen.
+    #[cfg(feature = "server")]
+    pub fn get_default(&'s self) -> Option<super::HttpInputDefaultValue<'s>> {
+        let default_attr = match self {
+            Self::HttpHeader(a) => a.default.clone(),
+            Self::HttpQuery(a) => a.default.clone(),
+            Self::HttpBody(a) => a.default.clone(),
+            Self::HttpFormData(a) => a.default.clone(),
+            Self::HttpBodyRaw(a) => a.default.clone(),
+            Self::HttpPath(a) => a.default.clone(),
+        };
+
+        default_attr.map(super::HttpInputDefaultValue::new)
+    }
+
     pub fn to_src_token_stream(&self) -> proc_macro2::TokenStream {
         let http_parameter_input_src = crate::consts::get_http_parameter_input_src();
         match self {

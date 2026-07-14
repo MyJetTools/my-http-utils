@@ -6,6 +6,12 @@ use crate::generic_utils::GenericData;
 /// `DataTypeProvider`). Reading such an object out of a request is a server concern and lives
 /// in my-http-server; here we only describe the model.
 pub fn generate(ast: &syn::DeriveInput) -> (proc_macro::TokenStream, bool) {
+    // Schema-only derive (a nested input object's `DataTypeProvider`) — server concern. Emit
+    // nothing for client (default) builds.
+    if !cfg!(feature = "server") {
+        return (proc_macro::TokenStream::new(), false);
+    }
+
     let struct_name = &ast.ident;
 
     let mut debug = false;
