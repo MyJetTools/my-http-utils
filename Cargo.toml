@@ -1,0 +1,20 @@
+[workspace]
+members = ["http-request-schema-macros", "tests"]
+
+[package]
+name = "my-http-utils"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+
+[dependencies]
+rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
+serde = { version = "*" }
+serde_json = { version = "*" }
+# Re-exported as `my_http_utils::macros` so consumers use the derives via my-http-utils, not the
+# proc-macro crate directly. Proc-macro crates are host-only, so this does not affect wasm.
+http-request-schema-macros = { path = "http-request-schema-macros" }

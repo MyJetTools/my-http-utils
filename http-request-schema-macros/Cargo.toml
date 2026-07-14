@@ -1,0 +1,21 @@
+[package]
+name = "http-request-schema-macros"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro = true
+
+# Emits only abstract, model-describing code: the schema (`DataTypeProvider`, input params)
+# and the client request builder (`THttpRequestBuilder`). No server/client split — server
+# codegen (request parsing, controllers, `http_route`) lives in my-http-server.
+
+[dependencies]
+syn = { version = "*", features = ["extra-traits"] }
+quote = "*"
+types-reader = { tag = "0.5.1", git = "https://github.com/MyJetTools/types-reader.git" }
+
+
+proc-macro2 = "*"

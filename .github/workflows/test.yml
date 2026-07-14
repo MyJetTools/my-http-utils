@@ -1,0 +1,35 @@
+name: Test our build
+
+on:
+  push:
+    branches: [ "*" ]
+  pull_request:
+    branches: [ "*" ]
+
+jobs:
+  test:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+
+      - name: Build with all features
+        run: |
+          cargo build --all-features
+
+      - name: Test out our build
+        run: |
+          cargo test --all-features
+
+      - name: Clippy (all features, warnings as errors)
+        run: |
+          cargo clippy --all-features -- -D warnings
+
+      - name: Verify wasm32 build (default features)
+        run: |
+          cargo build --target wasm32-unknown-unknown
