@@ -27,9 +27,32 @@ markup. my-http-utils has no hyper/tokio/server dependencies, so models compile 
 | `MyHttpStringEnum` / `MyHttpIntegerEnum` | use an enum as a parameter value |
 | `#[http_input_field]` | a custom `String`-wrapper field type |
 
-Field markup: `#[http_query]`, `#[http_path]`, `#[http_header]`, `#[http_form_data]`,
-`#[http_body]`, `#[http_body_raw]` — each with `name`, `description`, `validator`, `to_lowercase`,
-`to_uppercase`, `trim`, `default`, `print_request_to_console`.
+### Field markup
+
+Every field of a `MyHttpInput` model is tagged with exactly one of these, saying where the value
+goes in the request:
+
+| attribute | where the field goes |
+|---|---|
+| `#[http_path(name = "…")]` | a URL **path** segment (substituted into the route) |
+| `#[http_query(name = "…")]` | a **query-string** parameter |
+| `#[http_header(name = "…")]` | a request **header** |
+| `#[http_body(name = "…")]` | one **root key of the JSON body** object |
+| `#[http_form_data(name = "…")]` | one **`multipart/form-data`** field |
+| `#[http_body_raw]` | the **entire body IS this one field** (raw bytes, or one serialized object) |
+
+Common params on every field attribute: `name`, `description`, `default`, `validator`, `trim`,
+`to_lowercase`, `to_uppercase`, `print_request_to_console`. On the client these shape the outgoing
+value (trim → case → validator); `default` only marks the schema param non-required.
+
+**Body kinds are mutually exclusive.** A model may use **at most one** of:
+
+- `#[http_body]` — the JSON body is an object of the named body fields (`{"name": …, "age": …}`).
+- `#[http_form_data]` — the body is `multipart/form-data`, one part per field.
+- `#[http_body_raw]` — the whole body is a single field (e.g. raw `Vec<u8>`, or one object).
+
+`#[http_path]` / `#[http_query]` / `#[http_header]` combine freely with any one body kind. Mixing
+two body kinds in one model is a **compile error** ("choose one of …").
 
 ### Building a request (`my_http_utils::schema::client`)
 

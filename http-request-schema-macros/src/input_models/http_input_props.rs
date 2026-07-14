@@ -54,14 +54,6 @@ impl<'s> HttpInputProperties<'s> {
             let attr: Option<HttpFormDataAttribute> = struct_property.try_get_attribute()?;
 
             if let Some(attr) = attr {
-                if !body_fields.is_empty() {
-                    struct_property.throw_error("http_body attribute already exists.")?;
-                }
-
-                if body_raw_field.is_some() {
-                    struct_property.throw_error("body_raw attribute already exists.")?;
-                }
-
                 form_data_fields.add(InputField::new(struct_property, attr));
                 continue;
             }
@@ -69,13 +61,6 @@ impl<'s> HttpInputProperties<'s> {
             let attr: Option<HttpBodyAttribute> = struct_property.try_get_attribute()?;
 
             if let Some(attr) = attr {
-                if !form_data_fields.is_empty() {
-                    struct_property.throw_error("form_data attribute already exists.")?;
-                }
-
-                if body_raw_field.is_some() {
-                    struct_property.throw_error("body_raw attribute already exists.")?;
-                }
                 body_fields.add(InputField::new(struct_property, attr));
                 continue;
             }
@@ -83,16 +68,8 @@ impl<'s> HttpInputProperties<'s> {
             let attr: Option<HttpBodyRawAttribute> = struct_property.try_get_attribute()?;
 
             if let Some(attr) = attr {
-                if !form_data_fields.is_empty() {
-                    struct_property.throw_error("form_data attribute already exists.")?;
-                }
-
                 if body_raw_field.is_some() {
-                    struct_property.throw_error("body_raw attribute can be used once.")?;
-                }
-
-                if !body_fields.is_empty() {
-                    struct_property.throw_error("http_body attribute already exists.")?;
+                    struct_property.throw_error("#[http_body_raw] can be used on only one field")?;
                 }
 
                 body_raw_field = Some(InputField::new(struct_property, attr));
@@ -116,59 +93,54 @@ impl<'s> HttpInputProperties<'s> {
     }
 
     fn self_check(&self) -> Result<(), syn::Error> {
-        if let Some(body_raw) = &self.body_raw_field {
-            if self.body_fields.is_some() {
-                let err = syn::Error::new_spanned(
-                    body_raw.property.field,
-                    "http_body data and http_body_raw can not be mixed",
-                );
-                return Err(err);
-            }
+        // A model may use only ONE body kind: #[http_body], #[http_form_data] or
+        // #[http_body_raw]. Report a single, clear "choose one" error if more than one is used.
+        let mut body_kinds: Vec<&'static str> = Vec::new();
+        if self.body_fields.is_some() {
+            body_kinds.push("#[http_body]");
+        }
+        if self.form_data_fields.is_some() {
+            body_kinds.push("#[http_form_data]");
+        }
+        if self.body_raw_field.is_some() {
+            body_kinds.push("#[http_body_raw]");
+        }
+        if body_kinds.len() > 1 {
+            // Point the error at some body field so the message is actionable.
+            let span = self
+                .body_raw_field
+                .as_ref()
+                .map(|f| f.property.field)
+                .or_else(|| {
+                    self.form_data_fields
+                        .as_ref()
+                        .and_then(|f| f.first())
+                        .map(|f| f.property.field)
+                })
+                .or_else(|| {
+                    self.body_fields
+                        .as_ref()
+                        .and_then(|f| f.first())
+                        .map(|f| f.property.field)
+                })
+                .unwrap();
 
-            if self.form_data_fields.is_some() {
-                let err = syn::Error::new_spanned(
-                    body_raw.property.field,
-                    "http_form_data and http_body_raw data can not be mixed",
-                );
-                return Err(err);
-            }
+            return Err(syn::Error::new_spanned(
+                span,
+                format!(
+                    "a model can use only one body kind, but found {}. \
+                     Choose one of: #[http_body], #[http_form_data], #[http_body_raw]",
+                    body_kinds.join(" + ")
+                ),
+            ));
         }
 
         if let Some(body_fields) = &self.body_fields {
             check_duplicated(body_fields)?;
-            if let Some(body_raw) = &self.body_raw_field {
-                let err = syn::Error::new_spanned(
-                    body_raw.property.field,
-                    "http_body_raw and http_body can not be mixed",
-                );
-                return Err(err);
-            }
-
-            if self.form_data_fields.is_some() {
-                let err = syn::Error::new_spanned(
-                    body_fields.first().unwrap().property.field,
-                    "http_form_data and http_body data can not be mixed",
-                );
-                return Err(err);
-            }
         }
+
         if let Some(form_data_fields) = &self.form_data_fields {
             check_duplicated(form_data_fields)?;
-            if let Some(body_raw) = &self.body_raw_field {
-                let err = syn::Error::new_spanned(
-                    body_raw.property.field,
-                    "http_body_raw and http_form_data data can not be mixed",
-                );
-                return Err(err);
-            }
-
-            if self.body_fields.is_some() {
-                let err = syn::Error::new_spanned(
-                    form_data_fields.first().unwrap().property.field,
-                    "http_body and http_form_data can not be mixed",
-                );
-                return Err(err);
-            }
         }
 
         if let Some(header_fields) = &self.header_fields {
