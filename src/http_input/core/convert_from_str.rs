@@ -6,7 +6,7 @@ use std::str::FromStr;
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use serde::de::DeserializeOwned;
 
-use super::HttpParseError;
+use crate::http_input::HttpParseError;
 
 pub fn to_simple_value<T: FromStr>(
     name: &str,

@@ -8,9 +8,10 @@ use serde::de::DeserializeOwned;
 
 use crate::url_encoded_data_reader::UrlEncodedDataReader;
 
+use crate::http_input::{HttpParseError, RawData, RawDataTyped};
+
+use super::convert_from_str;
 use super::data_src::SRC_BODY;
-use super::types::{RawData, RawDataTyped};
-use super::{convert_from_str, HttpParseError};
 
 /// How a body should be parsed, derived from its `Content-Type` (or sniffed from the bytes).
 #[derive(Clone, Debug, PartialEq, Eq)]

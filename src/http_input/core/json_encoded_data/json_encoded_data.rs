@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde_json::value::RawValue;
 
-use crate::http_input::data_src::SRC_BODY_JSON;
+use crate::http_input::core::data_src::SRC_BODY_JSON;
 use crate::http_input::HttpParseError;
 
 use super::JsonEncodedValueAsString;

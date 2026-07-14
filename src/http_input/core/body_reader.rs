@@ -1,10 +1,11 @@
 use crate::form_data_reader::FormDataReader;
 use crate::url_encoded_data_reader::UrlEncodedDataReader;
 
+use crate::http_input::{HttpInputValue, HttpParseError};
+
 use super::body_content::BodyContentType;
 use super::data_src::{SRC_BODY, SRC_BODY_JSON, SRC_BODY_URL_ENCODED};
 use super::json_encoded_data::JsonEncodedData;
-use super::{HttpInputValue, HttpParseError};
 
 enum ParsedBody<'s> {
     UrlEncoded(UrlEncodedDataReader<'s>),

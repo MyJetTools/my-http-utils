@@ -1,5 +1,10 @@
 #![allow(clippy::module_inception)]
 
+// Our own derive/attribute macros (e.g. `#[http_input_field]`) emit fully-qualified
+// `my_http_utils::…` paths so they resolve in downstream crates. This self-alias makes those same
+// paths resolve when the macros are used *inside* this crate (as `PasswordHttpInputField` does).
+extern crate self as my_http_utils;
+
 mod decode_from_url_string;
 pub mod query_string;
 pub mod url_decoder;

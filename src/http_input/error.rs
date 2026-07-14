@@ -1,5 +1,5 @@
 use crate::form_data_reader::ReadingFromDataError;
-use crate::http_input::data_src::SRC_FORM_DATA;
+use crate::http_input::core::data_src::SRC_FORM_DATA;
 use crate::url_decoder::UrlDecodeError;
 use crate::url_encoded_data_reader::ReadingEncodedDataError;
 

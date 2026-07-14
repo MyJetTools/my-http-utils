@@ -1,5 +1,6 @@
-//! Names of the sources a value was read from. They travel inside [`super::HttpParseError`] and
-//! [`super::HttpInputValue`] so an error can say *where* a value came from, and so the server
+//! Names of the sources a value was read from. They travel inside
+//! [`crate::http_input::HttpParseError`] and [`crate::http_input::HttpInputValue`] so an error can
+//! say *where* a value came from, and so the server
 //! can rebuild the exact same `HttpFailResult` text from a `HttpParseError`.
 //!
 //! Ported verbatim from `my-http-server-core::data_src` (plus `SRC_PATH`).

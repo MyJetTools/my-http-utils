@@ -1,7 +1,8 @@
 //! Server-side `parse` tests. The derive-generated `parse` is exercised through an in-memory
 //! `THttpRequest`, exactly as `my-http-server` will drive it — but with no hyper/tokio in sight.
 
-use my_http_utils::http_input::{HttpParseError, THttpRequest};
+use my_http_utils::http_input::core::THttpRequest;
+use my_http_utils::http_input::HttpParseError;
 use my_http_utils::macros::*;
 
 // ---- in-memory THttpRequest -------------------------------------------------
@@ -309,7 +310,8 @@ fn reads_body_false_for_query_only_model() {
 
 // ---- regressions from the adversarial review -------------------------------
 
-use my_http_utils::http_input::{BodyReader, FileContent, QueryStringReader, RawData};
+use my_http_utils::http_input::core::{BodyReader, QueryStringReader};
+use my_http_utils::http_input::{FileContent, RawData};
 
 // Non-Option #[http_body_raw] must take the whole body verbatim, NOT route through the
 // content-type-parsing BodyReader — which would reject a non-object JSON body even though the
@@ -364,4 +366,51 @@ fn file_from_query_value_is_forbidden() {
     let value = query.get_required("f").unwrap();
     let result: Result<FileContent, _> = value.try_into();
     assert!(matches!(result, Err(HttpParseError::Forbidden(_))));
+}
+
+// ---- PasswordHttpInputField: the utils-owned custom field --------------------
+
+use my_http_utils::http_input::PasswordHttpInputField;
+use my_http_utils::schema::data_types::{DataTypeProvider, HttpDataType, HttpSimpleType};
+
+// The full public surface the previous server-side field exposed.
+#[test]
+fn password_field_public_api() {
+    // new(String) + as_str()
+    let p = PasswordHttpInputField::new("secret".to_string());
+    assert_eq!(p.as_str(), "secret");
+
+    // Deref<Target = str> — str methods work directly.
+    assert_eq!(p.len(), 6);
+    assert!(p.starts_with("sec"));
+
+    // Into<String>
+    let s: String = p.into();
+    assert_eq!(s, "secret");
+
+    // From<String>
+    let p: PasswordHttpInputField = "pw".to_string().into();
+    // into_string()
+    assert_eq!(p.into_string(), "pw");
+
+    // DataTypeProvider → Password (Swagger renders it masked).
+    assert!(matches!(
+        PasswordHttpInputField::get_data_type(),
+        HttpDataType::SimpleType(HttpSimpleType::Password)
+    ));
+}
+
+// Server parse: a model whose field is the utils-owned PasswordHttpInputField, driven exactly
+// like my-http-server will drive it. Proves the derive-emitted `TryFrom<HttpInputValue>` wires up.
+#[derive(Debug, MyHttpInput)]
+struct LoginModel {
+    #[http_query(name = "password", description = "")]
+    password: PasswordHttpInputField,
+}
+
+#[test]
+fn password_field_parses_from_request() {
+    let request = FakeRequest::default().query("password=hunter2");
+    let model = LoginModel::parse(&request).unwrap();
+    assert_eq!(model.password.as_str(), "hunter2");
 }

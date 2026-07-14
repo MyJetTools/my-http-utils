@@ -9,8 +9,7 @@ use serde::de::DeserializeOwned;
 
 use crate::form_data_reader::FormDataItem;
 
-use super::types::{FileContent, RawData, RawDataTyped};
-use super::{HttpInputValue, HttpParseError};
+use crate::http_input::{FileContent, HttpInputValue, HttpParseError, RawData, RawDataTyped};
 
 impl<'s> TryInto<String> for HttpInputValue<'s> {
     type Error = HttpParseError;

@@ -6,15 +6,17 @@ use serde::de::DeserializeOwned;
 use crate::form_data_reader::FormDataItem;
 use crate::url_encoded_data_reader::UrlEncodedValue;
 
-use super::data_src::{SRC_FORM_DATA, SRC_HEADER};
-use super::json_encoded_data::JsonEncodedValueAsString;
-use super::{convert_from_str, error::convert_reading_error, HttpParseError};
+use super::core::convert_from_str;
+use super::core::data_src::{SRC_FORM_DATA, SRC_HEADER};
+use super::core::json_encoded_data::JsonEncodedValueAsString;
+use super::error::convert_reading_error;
+use super::HttpParseError;
 
 /// A single named value read out of an incoming request, before it is converted into a model
 /// field's concrete type. This is the concrete port of the server's `EncodedParamValue` — the
 /// value is deliberately **not** abstracted (a generic value would explode the where-bounds in
 /// the derive and break validators), while the *sources* are abstracted behind
-/// [`super::THttpRequest`].
+/// [`super::core::THttpRequest`].
 ///
 /// * `UrlEncoded` — query string, path segments, and `x-www-form-urlencoded` bodies. The value
 ///   is percent-decoded on read.
@@ -22,7 +24,7 @@ use super::{convert_from_str, error::convert_reading_error, HttpParseError};
 /// * `FormData` — a `multipart/form-data` part (value or file).
 /// * `Plain` — a header value: taken verbatim (headers are not percent-encoded).
 ///
-/// All the `TryInto<T>` conversions live in [`super::mappers`].
+/// All the `TryInto<T>` conversions live in [`super::core`] (`mappers`).
 pub enum HttpInputValue<'s> {
     UrlEncoded {
         value: UrlEncodedValue<'s>,

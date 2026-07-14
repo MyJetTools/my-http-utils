@@ -1,7 +1,8 @@
 use crate::url_encoded_data_reader::UrlEncodedDataReader;
 
+use crate::http_input::{HttpInputValue, HttpParseError};
+
 use super::data_src::SRC_QUERY_STRING;
-use super::{HttpInputValue, HttpParseError};
 
 /// Reads model fields out of a query string. Thin wrapper over [`UrlEncodedDataReader`] that
 /// tags every value with `SRC_QUERY_STRING` and lifts it into an [`HttpInputValue`]. Built by

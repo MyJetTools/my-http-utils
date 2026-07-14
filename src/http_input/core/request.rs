@@ -1,8 +1,9 @@
 use crate::url_encoded_data_reader::UrlEncodedValue;
 
+use crate::http_input::{HttpInputValue, HttpParseError};
+
 use super::body_content::{BodyContentType, HttpRequestBodyContent};
 use super::data_src::{SRC_HEADER, SRC_PATH};
-use super::{HttpInputValue, HttpParseError};
 
 /// The single abstraction the server-independent `parse` reads through: a transport-free view of
 /// an incoming request. The server implements it over its concrete request (hyper headers, a

@@ -1,7 +1,7 @@
 //! Generates the server-independent sync `parse` (and the `READS_BODY` const) on a `MyHttpInput`
 //! model. Only built with the `server` feature. Semantics mirror the old server-side
 //! `parse_http_input` codegen (`my-http-server-macros`) 1:1, but every source is read through the
-//! abstract [`my_http_utils::http_input::THttpRequest`], and values convert via
+//! abstract [`my_http_utils::http_input::core::THttpRequest`], and values convert via
 //! `HttpInputValue::try_into` instead of `EncodedParamValue`.
 
 use proc_macro2::TokenStream;
@@ -45,7 +45,7 @@ pub fn generate_parse(
     // ---- query string ----
     if let Some(query_fields) = &props.query_string_fields {
         reads.push(quote! {
-            let __query = my_http_utils::http_input::QueryStringReader::new(request.get_query_string())?;
+            let __query = my_http_utils::http_input::core::QueryStringReader::new(request.get_query_string())?;
         });
         for field in query_fields {
             fields_to_return.push(field.read_value_with_transformation()?);
@@ -77,7 +77,7 @@ pub fn generate_parse(
 
     if needs_body_reader {
         reads.push(quote! {
-            let __body = my_http_utils::http_input::BodyReader::from_parts(
+            let __body = my_http_utils::http_input::core::BodyReader::from_parts(
                 request.get_body(),
                 request.get_content_type(),
             )?;
@@ -117,10 +117,10 @@ pub fn generate_parse(
             /// needed before calling [`Self::parse`].
             pub const READS_BODY: bool = #reads_body;
 
-            /// Parses the model out of an abstract [`my_http_utils::http_input::THttpRequest`].
+            /// Parses the model out of an abstract [`my_http_utils::http_input::core::THttpRequest`].
             /// Synchronous: the body is expected to be already received (see [`Self::READS_BODY`]).
             pub fn parse(
-                request: &impl my_http_utils::http_input::THttpRequest,
+                request: &impl my_http_utils::http_input::core::THttpRequest,
             ) -> Result<Self, my_http_utils::http_input::HttpParseError> {
                 #(#reads)*
                 #(#validations)*
@@ -134,7 +134,7 @@ fn read_path(field: &InputField) -> Result<TokenStream, syn::Error> {
     let name = field.get_input_field_name()?;
     let let_param = field.get_let_input_param();
     Ok(quote! {
-        let #let_param = my_http_utils::http_input::read_path_value(request, #name)?.try_into()?;
+        let #let_param = my_http_utils::http_input::core::read_path_value(request, #name)?.try_into()?;
     })
 }
 
@@ -145,7 +145,7 @@ fn read_header(field: &InputField) -> Result<TokenStream, syn::Error> {
     if field.property.ty.is_option() {
         let default_value = field.get_default_value_opt_case()?;
         return Ok(quote! {
-            let #let_param = if let Some(value) = my_http_utils::http_input::read_header_optional(request, #name) {
+            let #let_param = if let Some(value) = my_http_utils::http_input::core::read_header_optional(request, #name) {
                 Some(value.try_into()?)
             } else {
                 #default_value
@@ -155,13 +155,13 @@ fn read_header(field: &InputField) -> Result<TokenStream, syn::Error> {
 
     if !field.has_default_value() {
         return Ok(quote! {
-            let #let_param = my_http_utils::http_input::read_header_required(request, #name)?.try_into()?;
+            let #let_param = my_http_utils::http_input::core::read_header_required(request, #name)?.try_into()?;
         });
     }
 
     let default_value = field.get_default_value_non_opt_case()?;
     Ok(quote! {
-        let #let_param = if let Some(value) = my_http_utils::http_input::read_header_optional(request, #name) {
+        let #let_param = if let Some(value) = my_http_utils::http_input::core::read_header_optional(request, #name) {
             value.try_into()?
         } else {
             #default_value
@@ -263,7 +263,7 @@ fn read_body_raw(field: &InputField) -> Result<TokenStream, syn::Error> {
         })
     } else {
         // Non-Option: the whole body, verbatim (no content-type parsing).
-        Ok(quote!(#ident: my_http_utils::http_input::read_raw_body(request).try_into()?))
+        Ok(quote!(#ident: my_http_utils::http_input::core::read_raw_body(request).try_into()?))
     }
 }
 

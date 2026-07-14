@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 
 use serde::de::DeserializeOwned;
 
-use crate::http_input::{convert_from_str, HttpParseError};
+use crate::http_input::core::convert_from_str;
+use crate::http_input::HttpParseError;
 
 /// Raw bytes that additionally know they can be deserialized into `T` on demand. Ported from
 /// `my-http-server-core::types::RawDataTyped`.
