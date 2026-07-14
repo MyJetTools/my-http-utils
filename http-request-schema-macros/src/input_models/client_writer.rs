@@ -217,34 +217,25 @@ fn value_base_expr(expr: TokenStream, ty: &PropertyType) -> TokenStream {
 /// `HttpRequestBody::Empty`. Always emits a method (the trait has no default).
 fn generate_get_body(props: &HttpInputProperties) -> Result<TokenStream, syn::Error> {
     if let Some(fields) = &props.body_fields {
-        let mut inserts = Vec::with_capacity(fields.len());
+        let mut writes = Vec::with_capacity(fields.len());
         for field in fields {
-            let name = field.get_input_field_name()?;
-            let ident = field.property.get_field_name_ident();
-            if let PropertyType::OptionOf(_) = &field.property.ty {
-                inserts.push(quote! {
-                    if let Some(value) = &self.#ident {
-                        __obj.insert(#name.to_string(), serde_json::to_value(value).unwrap_or(serde_json::Value::Null));
-                    }
-                });
-            } else {
-                inserts.push(quote! {
-                    __obj.insert(#name.to_string(), serde_json::to_value(&self.#ident).unwrap_or(serde_json::Value::Null));
-                });
-            }
+            writes.push(body_object_write(field)?);
         }
         return Ok(quote! {
             #[allow(clippy::extra_unused_type_parameters)]
             fn get_body<__TRnd: my_http_utils::schema::client::RandomStringGenerator>(self) -> Result<my_http_utils::body::HttpRequestBody, my_http_utils::schema::client::HttpRequestBuildError> {
-                let mut __obj = serde_json::Map::new();
-                #(#inserts)*
-                match serde_json::to_vec(&serde_json::Value::Object(__obj)) {
-                    Ok(__bytes) => Ok(my_http_utils::body::HttpRequestBody::Json(__bytes)),
-                    Err(_) => Ok(my_http_utils::body::HttpRequestBody::Empty),
-                }
+                // Build the JSON body with my-json's allocation-light writer: each field is appended
+                // straight into one String buffer — no `serde_json::Map`, no per-field `to_value`,
+                // no intermediate `serde_json::Value` tree.
+                let __obj = my_http_utils::my_json::json_writer::JsonObjectWriter::new();
+                #(let __obj = #writes;)*
+                Ok(my_http_utils::body::HttpRequestBody::Json(__obj.build().into_bytes()))
             }
         });
     }
+
+    // (helpers `body_object_write` / `body_leaf_writer_expr` / `body_option_writer_expr` are
+    // defined below `generate_get_body`.)
 
     if let Some(fields) = &props.form_data_fields {
         let mut appends = Vec::with_capacity(fields.len());
@@ -314,4 +305,20 @@ fn generate_get_body(props: &HttpInputProperties) -> Result<TokenStream, syn::Er
             Ok(my_http_utils::body::HttpRequestBody::Empty)
         }
     })
+}
+
+/// Emits the expression that appends one `#[http_body]` field into `__obj` (a `JsonObjectWriter`)
+/// and returns the updated writer. Body fields carry no client-side directives (matching the
+/// previous serde path). Delegates to the shared object-field codegen, so a `Struct` body field
+/// (object structure / enum / custom field — all now `JsonValueWriter`) is serialised the same way
+/// whether it is a body field here or nested inside another object.
+fn body_object_write(field: &InputField) -> Result<TokenStream, syn::Error> {
+    let name = field.get_input_field_name()?;
+    let ident = field.property.get_field_name_ident();
+    let place = quote!(self.#ident);
+    Ok(crate::json_value_writer_gen::json_object_field_write(
+        name,
+        &place,
+        &field.property.ty,
+    ))
 }

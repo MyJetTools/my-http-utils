@@ -105,6 +105,15 @@ pub fn generate(ast: &syn::DeriveInput, as_integer: bool) -> Result<TokenStream,
             #default_as_str_fn
         }
 
+        // value -> JSON string. Always emitted so the client request builder can serialise an
+        // enum-typed field (top-level or nested in an object) with `my_json`, no serde.
+        impl my_http_utils::my_json::json_writer::JsonValueWriter for #struct_name {
+            const IS_ARRAY: bool = false;
+            fn write(&self, __dest: &mut String) {
+                my_http_utils::my_json::json_writer::JsonValueWriter::write(&self.as_str(), __dest);
+            }
+        }
+
         #default_trait
 
         #data_type_provider

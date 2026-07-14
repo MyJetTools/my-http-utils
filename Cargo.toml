@@ -14,14 +14,18 @@ default = []
 # `READS_BODY`). Off by default so wasm clients pull only the schema + client request builder.
 # The whole `http_input` layer is wasm-safe (no hyper/tokio), so enabling `server` still
 # compiles for `wasm32-unknown-unknown` — it is simply not needed by browser clients.
-# `serde_json/raw_value` lets the JSON body reader keep each member's verbatim source text
-# (exact number scale/precision + byte-for-byte sub-documents), matching the original reader.
-server = ["http-request-schema-macros/server", "serde_json/raw_value"]
+server = ["http-request-schema-macros/server"]
 
 [dependencies]
 rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
 serde = { version = "*" }
 serde_json = { version = "*" }
+# The JSON engine for both directions, allocation-light and wasm-safe:
+#   * client (always on) — `JsonObjectWriter` builds the `#[http_body]` request body straight into
+#     one String buffer (no `serde_json::Map` / per-field `to_value` / HashMap);
+#   * server (`server` feature) — `JsonValueRef` reads named body members lazily, zero-copy, keeping
+#     each member's verbatim source text.
+my-json = { git = "https://github.com/MyJetTools/my-json.git" }
 # Re-exported as `my_http_utils::macros` so consumers use the derives via my-http-utils, not the
 # proc-macro crate directly. Proc-macro crates are host-only, so this does not affect wasm.
 http-request-schema-macros = { path = "http-request-schema-macros" }

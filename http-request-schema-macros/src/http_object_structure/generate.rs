@@ -7,12 +7,6 @@ pub fn generate(
     ast: &syn::DeriveInput,
     debug: &mut bool,
 ) -> Result<proc_macro::TokenStream, syn::Error> {
-    // `MyHttpObjectStructure` is OpenAPI/Swagger schema only — server concern. Emit nothing for
-    // client (default) builds so browser bundles stay small.
-    if !cfg!(feature = "server") {
-        return Ok(proc_macro::TokenStream::new());
-    }
-
     let struct_name = &ast.ident;
 
     let fields = StructProperty::read(ast)?;
@@ -25,19 +19,30 @@ pub fn generate(
 
     let generic_data = GenericData::new(ast);
 
-    let get_http_data_structure =
-        super::generate_get_http_data_structure(struct_name, generic_data.as_ref(), &fields)?;
-
-    let data_structure_provider = crate::http_object_structure::generate_data_provider(
+    // `JsonValueWriter` — always emitted so the client request builder can serialise this object
+    // (whether it is the whole body or nested) with `my_json`, no serde.
+    let json_value_writer = crate::json_value_writer_gen::generate_object_json_value_writer(
         struct_name,
-        generic_data.as_ref(),
-        get_http_data_structure,
+        generic_data.is_some(),
+        &fields,
     )?;
 
+    // OpenAPI/Swagger schema — server concern; emit nothing for client (default) builds.
+    let data_structure_provider = if cfg!(feature = "server") {
+        let get_http_data_structure =
+            super::generate_get_http_data_structure(struct_name, generic_data.as_ref(), &fields)?;
+        crate::http_object_structure::generate_data_provider(
+            struct_name,
+            generic_data.as_ref(),
+            get_http_data_structure,
+        )?
+    } else {
+        quote!()
+    };
+
     let result = quote! {
-
+        #json_value_writer
         #data_structure_provider
-
     }
     .into();
 

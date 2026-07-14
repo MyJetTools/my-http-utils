@@ -37,7 +37,7 @@ markup. my-http-utils has no hyper/tokio/server dependencies, so models compile 
 | `MyHttpInput` | derive on a request model: emits the client request builder — plus, under the `server` feature, the schema and the sync `parse` |
 | `MyHttpObjectStructure` / `MyHttpInputObjectStructure` | describe a nested object used in a body/response |
 | `MyHttpStringEnum` / `MyHttpIntegerEnum` | use an enum as a parameter value |
-| `#[http_input_field]` | a custom `String`-wrapper field type |
+| `#[http_input_field]` | define a custom `String`-wrapper field type (the built-in `PasswordHttpInputField` is one) |
 
 ### Field markup
 
@@ -51,7 +51,7 @@ goes in the request:
 | `#[http_header(name = "…")]` | a request **header** |
 | `#[http_body(name = "…")]` | one **root key of the JSON body** object |
 | `#[http_form_data(name = "…")]` | one **`multipart/form-data`** field |
-| `#[http_body_raw]` | the **entire body IS this one field** (raw bytes, or one serialized object) |
+| `#[http_body_raw]` | the **entire body IS this one field** — verbatim `Vec<u8>` (or `RawData` / `RawDataTyped<T>` / `String`) |
 
 Common params on every field attribute: `name`, `description`, `default`, `validator`, `trim`,
 `to_lowercase`, `to_uppercase`, `print_request_to_console`. On the client these shape the outgoing
@@ -61,7 +61,7 @@ value (trim → case → validator); `default` only marks the schema param non-r
 
 - `#[http_body]` — the JSON body is an object of the named body fields (`{"name": …, "age": …}`).
 - `#[http_form_data]` — the body is `multipart/form-data`, one part per field.
-- `#[http_body_raw]` — the whole body is a single field (e.g. raw `Vec<u8>`, or one object).
+- `#[http_body_raw]` — the whole body is a single field: verbatim `Vec<u8>`, `RawData`, `RawDataTyped<T>`, or `String`.
 
 `#[http_path]` / `#[http_query]` / `#[http_header]` combine freely with any one body kind. Mixing
 two body kinds in one model is a **compile error** ("choose one of …").
@@ -99,6 +99,16 @@ With the `server` feature on, the same `MyHttpInput` markup **also** parses an i
 so `my-http-server` no longer needs its own parsing derive. It stays transport-free: the whole
 `http_input` layer is wasm-safe and knows nothing about hyper/tokio.
 
+The module is split so the **types live at the root of `http_input`** and the **parse engine lives
+in `http_input::core`**:
+
+- **`http_input`** (root) — the types a model or a custom field touches: `HttpInputValue`,
+  `HttpParseError`, the body/file field types `RawData` / `RawDataTyped<T>` / `FileContent`, and the
+  ready-made custom field `PasswordHttpInputField`.
+- **`http_input::core`** — the engine: the `THttpRequest` trait, the query / body readers, the
+  `&str → T` converters, the source tags (`core::data_src::SRC_*`), and the `HttpInputValue → field`
+  conversions.
+
 `MyHttpInput` then additionally generates, for `Model`:
 
 ```rust
@@ -108,14 +118,14 @@ impl Model {
     pub const READS_BODY: bool;
 
     /// Synchronous — the server reads the body first (if READS_BODY) and exposes it via the trait.
-    pub fn parse(request: &impl my_http_utils::http_input::THttpRequest)
+    pub fn parse(request: &impl my_http_utils::http_input::core::THttpRequest)
         -> Result<Self, my_http_utils::http_input::HttpParseError>;
 }
 ```
 
 The signature is **the same for every model**, so a caller that only knows the type name can call
-`parse`. Everything a request exposes is abstracted behind **one trait** the server implements
-(tests implement it over in-memory data):
+`parse`. Everything a request exposes is abstracted behind **one trait**, `http_input::core::THttpRequest`,
+that the server implements (tests implement it over in-memory data):
 
 ```rust
 pub trait THttpRequest {
@@ -137,11 +147,12 @@ get a `TryFrom<HttpInputValue>` so they parse too.
 
 | type | what it's for |
 |---|---|
-| `http_input::THttpRequest` | the one trait the server (or a test) implements |
+| `http_input::core::THttpRequest` | the one trait the server (or a test) implements |
 | `http_input::HttpInputValue` | a single read value, before conversion to a field's type |
 | `http_input::HttpParseError` | parse failure: `RequiredParameterIsMissing{name,src}`, `CanNotParseValue{name,src,value}`, `UrlDecodeError`, `InvalidBodyFormat`, `NotSupportedContentType`, `Forbidden`, `Validation` |
-| `http_input::HttpRequestBodyContent` | the whole raw body, for `#[http_body_raw]` |
-| `http_input::data_src::SRC_*` | source tags carried by values/errors (`Path`, `QueryString`, `Header`, `BodyJson`, …) |
+| `http_input::{RawData, RawDataTyped<T>, FileContent}` | body/file field types: verbatim bytes / bytes that deserialize into `T` on demand / an uploaded `multipart/form-data` file |
+| `http_input::PasswordHttpInputField` | a ready-made `#[http_input_field]` type — a `String` rendered as OpenAPI `password` |
+| `http_input::core::data_src::SRC_*` | source tags carried by values/errors (`Path`, `QueryString`, `Header`, `BodyJson`, …) |
 
 `HttpParseError` keeps enough data (`name` / `src` / `value`) for the server to rebuild the exact
 same `HttpFailResult` (status + text) it used to produce inline, via its own
@@ -157,7 +168,11 @@ through `f64`) and a `RawData` / `RawDataTyped` field gets the member's original
 - `#[http_query]` — Option / required / `default`; `Vec<T>` reads every repeat of the name.
 - `#[http_header]` — Option / required / `default`; case-insensitive, taken verbatim.
 - `#[http_body]` / `#[http_form_data]` — named body fields; the impl dispatches JSON vs form-data.
-- `#[http_body_raw]` — non-Option reads the whole body; Option reads the named body field.
+- `#[http_body_raw]` — non-Option takes the **whole body verbatim as `Vec<u8>`** and converts from
+  those bytes: `Vec<u8>` as-is, `RawData` / `RawDataTyped<T>` via infallible `From<Vec<u8>>` (any JSON
+  error surfaces later, only from `RawDataTyped::deserialize_json`), `String` via a utf-8 check. No
+  content-type parsing, so a binary / non-object body is never rejected up front. An **Option**
+  `#[http_body_raw]` reads a *named* body field instead.
 - `trim` / `to_lowercase` / `to_uppercase` apply to `String` fields after reading.
 
 **Validators.** `validator = "fn"` uses the **same** contract as the client builder —
@@ -216,7 +231,7 @@ Implement `THttpRequest` once (the server does this over hyper; here it's a plai
 then any model parses through it:
 
 ```rust
-use my_http_utils::http_input::THttpRequest;
+use my_http_utils::http_input::core::THttpRequest;
 use my_http_utils::macros::*;
 
 struct InMemory { query: String, body: Vec<u8>, ctype: Option<String> }
@@ -256,9 +271,10 @@ enable the feature.
 ## Tests
 
 ```sh
-cargo test                       # client builder + schema
-cargo test --features server     # + the http_input runtime unit tests
+cargo test --workspace --all-features
 ```
 
-The `tests` crate enables `server`, so it also exercises the derive-generated `parse` end to end
-(see `tests/src/parse_tests.rs`).
+`--workspace` matters: the integration `tests` crate is a workspace member (not a dependency of the
+root library), so a bare `cargo test` only runs the root library's own unit tests and **skips it**.
+That crate always enables `server`, and exercises both the client request builder and the
+derive-generated `parse` end to end (`tests/src/parse_tests.rs`, `tests/src/lib.rs`).

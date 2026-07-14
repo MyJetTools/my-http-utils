@@ -12,6 +12,7 @@ mod http_input_field;
 mod http_input_object_structure;
 mod http_object_structure;
 mod input_models;
+mod json_value_writer_gen;
 mod property_type_ext;
 mod types;
 

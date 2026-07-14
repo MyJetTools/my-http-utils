@@ -23,6 +23,10 @@ pub mod body;
 pub mod form_data_reader;
 pub mod schema;
 
+/// Re-exported so the derive-generated client body builder can reach `JsonObjectWriter` via a
+/// fully-qualified `my_http_utils::my_json::…` path (consumers don't depend on `my-json` directly).
+pub use my_json;
+
 /// Server-independent HTTP request parsing (value type, conversions, error, body readers and the
 /// `THttpRequest` abstraction) plus the runtime the derive-generated `parse` targets. Gated
 /// behind the `server` feature so wasm clients that only build requests don't compile it.

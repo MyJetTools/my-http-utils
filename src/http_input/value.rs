@@ -31,8 +31,11 @@ pub enum HttpInputValue<'s> {
         src: &'static str,
     },
     Json {
+        // Owned (not `&'s …`): the value is now built lazily per lookup from `my_json`, borrowing
+        // the body bytes directly, so there is no pre-parsed store to hand out a reference into —
+        // mirroring the `UrlEncoded` variant, which likewise holds its value by value.
         name: &'s str,
-        value: &'s JsonEncodedValueAsString<'s>,
+        value: JsonEncodedValueAsString<'s>,
         src: &'static str,
     },
     FormData {

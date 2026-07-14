@@ -116,6 +116,17 @@ mod tests {
         age: Option<i32>,
     }
 
+    // An object structure gets a my-json `JsonValueWriter` (no serde) so it can be serialised
+    // as the whole body or nested inside another object. `#[serde(rename)]` still drives the key
+    // (the Serialize derive is only present to register that attribute — it is not used to build).
+    #[derive(Serialize, MyHttpObjectStructure)]
+    struct NestedCfg {
+        host: String,
+        port: u16,
+        #[serde(rename = "tagName")]
+        tag: Option<String>,
+    }
+
     #[derive(MyHttpInput)]
     struct FormDataModel {
         #[http_form_data(name = "title", description = "")]
@@ -281,6 +292,31 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&partial.into_vec()).unwrap();
         assert_eq!(v["name"], "x");
         assert!(v.get("age").is_none(), "None option must be omitted");
+    }
+
+    #[test]
+    fn object_structure_json_value_writer() {
+        use my_http_utils::my_json::json_writer::JsonValueWriter;
+
+        // Fields render in declaration order; a `None` Option is omitted.
+        let mut s = String::new();
+        NestedCfg {
+            host: "h".to_string(),
+            port: 8080,
+            tag: None,
+        }
+        .write(&mut s);
+        assert_eq!(s, r#"{"host":"h","port":8080}"#);
+
+        // A `Some` renames via `#[serde(rename)]` → "tagName".
+        let mut s2 = String::new();
+        NestedCfg {
+            host: "h".to_string(),
+            port: 1,
+            tag: Some("blue".to_string()),
+        }
+        .write(&mut s2);
+        assert_eq!(s2, r#"{"host":"h","port":1,"tagName":"blue"}"#);
     }
 
     #[test]
