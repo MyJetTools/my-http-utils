@@ -2,7 +2,6 @@ use crate::url_encoded_data_reader::UrlEncodedValue;
 
 use crate::http_input::{HttpInputValue, HttpParseError};
 
-use super::body_content::{BodyContentType, HttpRequestBodyContent};
 use super::data_src::{SRC_HEADER, SRC_PATH};
 
 /// The single abstraction the server-independent `parse` reads through: a transport-free view of
@@ -67,15 +66,11 @@ pub fn read_header_required<'s, R: THttpRequest + ?Sized>(
     read_header_optional(request, name).ok_or_else(|| HttpParseError::required(name, SRC_HEADER))
 }
 
-/// The whole request body as [`HttpRequestBodyContent`], for a non-Option `#[http_body_raw]`
-/// field. Unlike [`super::BodyReader`] this does **not** parse the body per content-type — the raw
-/// body is handed straight to the field's `TryInto` (bytes / String / a JSON deserialize of the
-/// whole body), so an array/scalar/binary/malformed body is never rejected up front.
-pub fn read_raw_body<R: THttpRequest + ?Sized>(request: &R) -> HttpRequestBodyContent {
-    let content_type = request
-        .get_content_type()
-        .and_then(|c| BodyContentType::from_content_type(c).ok())
-        .unwrap_or(BodyContentType::Unknown);
-
-    HttpRequestBodyContent::new(request.get_body().to_vec(), content_type)
+/// The whole request body as raw bytes, for a non-Option `#[http_body_raw]` field. The bytes are
+/// handed straight to the field's conversion — `Vec<u8>` verbatim, `RawData` / `RawDataTyped` via
+/// `From<Vec<u8>>`, `String` via a utf-8 `TryFrom` — with **no** content-type parsing, so an
+/// array / scalar / binary / malformed body is never rejected up front (unlike [`super::BodyReader`],
+/// which does dispatch on content type for *named* body fields).
+pub fn read_raw_body<R: THttpRequest + ?Sized>(request: &R) -> Vec<u8> {
+    request.get_body().to_vec()
 }

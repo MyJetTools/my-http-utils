@@ -1,17 +1,11 @@
-//! The request body as a whole. Backs `#[http_body_raw]` (non-Option) fields, whose value is
-//! `body.raw_body()?.try_into()?`. Ported from `my-http-server-core` — `HttpRequestBodyContent`
-//! (its `TryInto` set) and `BodyContentType` — dropping hyper and returning [`HttpParseError`].
+//! Interpreting a request body's `Content-Type`: [`BodyContentType`] (how to parse the body —
+//! JSON / url-encoded / multipart / unknown / empty) and [`extract_web_form_boundary`] (the
+//! multipart boundary). That's all `my-http-utils` needs from the content type — the raw body
+//! itself is handed to a `#[http_body_raw]` field verbatim as `Vec<u8>` (see
+//! [`super::read_raw_body`]), never dispatched on its content type.
 
-use std::collections::HashMap;
-
-use serde::de::DeserializeOwned;
-
+use crate::http_input::HttpParseError;
 use crate::url_encoded_data_reader::UrlEncodedDataReader;
-
-use crate::http_input::{HttpParseError, RawData, RawDataTyped};
-
-use super::convert_from_str;
-use super::data_src::SRC_BODY;
 
 /// How a body should be parsed, derived from its `Content-Type` (or sniffed from the bytes).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,98 +83,4 @@ pub fn extract_web_form_boundary(content_type: &str) -> Option<&str> {
     }
 
     None
-}
-
-/// The full request body, owned. Only `#[http_body_raw]` non-Option fields go through it (raw
-/// bytes / string / a JSON deserialize of the whole body).
-pub struct HttpRequestBodyContent {
-    raw_body: Vec<u8>,
-    #[allow(dead_code)]
-    body_content_type: BodyContentType,
-}
-
-impl HttpRequestBodyContent {
-    pub fn new(body: Vec<u8>, body_content_type: BodyContentType) -> Self {
-        let body_content_type = if body_content_type.is_unknown_or_empty() {
-            BodyContentType::detect_from_body(body.as_slice()).unwrap_or(body_content_type)
-        } else {
-            body_content_type
-        };
-
-        Self {
-            raw_body: body,
-            body_content_type,
-        }
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        &self.raw_body
-    }
-
-    pub fn get_body(self) -> Vec<u8> {
-        self.raw_body
-    }
-
-    pub fn as_str(&self) -> Result<&str, HttpParseError> {
-        std::str::from_utf8(self.as_slice())
-            .map_err(|err| HttpParseError::InvalidBodyFormat(format!("Body is not valid UTF-8: {}", err)))
-    }
-}
-
-macro_rules! impl_body_try_into_simple {
-    ($($t:ty),+ $(,)?) => {
-        $(
-            impl TryInto<$t> for HttpRequestBodyContent {
-                type Error = HttpParseError;
-                fn try_into(self) -> Result<$t, Self::Error> {
-                    let str = self.as_str()?;
-                    convert_from_str::to_simple_value("HttpBody", str, SRC_BODY)
-                }
-            }
-        )+
-    };
-}
-
-impl_body_try_into_simple!(u8, i8, u16, i16, u32, i32, u64, i64, usize, isize, f32, f64);
-
-impl<T: DeserializeOwned> TryInto<Vec<T>> for HttpRequestBodyContent {
-    type Error = HttpParseError;
-    fn try_into(self) -> Result<Vec<T>, Self::Error> {
-        convert_from_str::to_json_from_slice("RawBody", self.as_slice(), SRC_BODY)
-    }
-}
-
-impl<T: DeserializeOwned> TryInto<HashMap<String, T>> for HttpRequestBodyContent {
-    type Error = HttpParseError;
-    fn try_into(self) -> Result<HashMap<String, T>, Self::Error> {
-        convert_from_str::to_json_from_slice("RawBody", self.as_slice(), SRC_BODY)
-    }
-}
-
-impl<'s> TryInto<&'s str> for &'s HttpRequestBodyContent {
-    type Error = HttpParseError;
-    fn try_into(self) -> Result<&'s str, Self::Error> {
-        self.as_str()
-    }
-}
-
-impl TryInto<String> for HttpRequestBodyContent {
-    type Error = HttpParseError;
-    fn try_into(self) -> Result<String, Self::Error> {
-        Ok(self.as_str()?.to_string())
-    }
-}
-
-impl TryInto<RawData> for HttpRequestBodyContent {
-    type Error = HttpParseError;
-    fn try_into(self) -> Result<RawData, Self::Error> {
-        Ok(RawData::new(self.get_body()))
-    }
-}
-
-impl<T: DeserializeOwned> TryInto<RawDataTyped<T>> for HttpRequestBodyContent {
-    type Error = HttpParseError;
-    fn try_into(self) -> Result<RawDataTyped<T>, Self::Error> {
-        Ok(RawDataTyped::new(self.get_body(), SRC_BODY))
-    }
 }

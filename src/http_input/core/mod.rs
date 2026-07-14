@@ -9,13 +9,13 @@ pub mod json_encoded_data;
 
 pub(crate) mod convert_from_str;
 
-mod body_content;
 mod body_reader;
+mod content_type;
 mod mappers;
 mod query_reader;
 mod request;
 
-pub use body_content::{extract_web_form_boundary, BodyContentType, HttpRequestBodyContent};
+pub use content_type::{extract_web_form_boundary, BodyContentType};
 pub use body_reader::BodyReader;
 pub use json_encoded_data::{JsonEncodedData, JsonEncodedValueAsString};
 pub use query_reader::QueryStringReader;
