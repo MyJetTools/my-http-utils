@@ -311,7 +311,7 @@ fn reads_body_false_for_query_only_model() {
 // ---- regressions from the adversarial review -------------------------------
 
 use my_http_utils::http_input::core::{BodyReader, QueryStringReader};
-use my_http_utils::http_input::{FileContent, RawData};
+use my_http_utils::http_input::{FileContent, RawData, RawDataTyped};
 
 // Non-Option #[http_body_raw] must take the whole body verbatim, NOT route through the
 // content-type-parsing BodyReader — which would reject a non-object JSON body even though the
@@ -414,3 +414,50 @@ fn password_field_parses_from_request() {
     let model = LoginModel::parse(&request).unwrap();
     assert_eq!(model.password.as_str(), "hunter2");
 }
+
+// ---- #[http_body_raw]: the raw path now moves the verbatim body Vec<u8> ------
+
+// `Vec<u8>` raw body = the bytes as-is (no JSON decode), symmetric with the client builder.
+#[derive(MyHttpInput)]
+struct RawBytesModel {
+    #[http_body_raw(description = "")]
+    data: Vec<u8>,
+}
+
+#[test]
+fn raw_body_vec_u8_is_verbatim_bytes() {
+    // Arbitrary binary that is NOT valid JSON (the old path tried to JSON-decode this and failed).
+    let raw = vec![0u8, 1, 2, 255, 254, 3, b'{'];
+    let request = FakeRequest::default().body("application/octet-stream", raw.clone());
+    let model = RawBytesModel::parse(&request).unwrap();
+    assert_eq!(model.data, raw, "verbatim bytes, not JSON-decoded");
+}
+
+// RawData is built from the raw bytes infallibly (From<Vec<u8>>). Exercised at the conversion level
+// (a RawData `#[http_body_raw]` model isn't client-buildable — RawData isn't Serialize).
+#[test]
+fn raw_data_from_vec_is_infallible_and_verbatim() {
+    let raw = vec![9u8, 8, 7, 0, 200];
+    let rd: RawData = raw.clone().into();
+    assert_eq!(rd.as_slice(), raw.as_slice());
+    // and the derive's uniform `.try_into()?` path (std TryFrom, Error = Infallible) also holds:
+    let rd2: RawData = raw.clone().try_into().unwrap();
+    assert_eq!(rd2.as_slice(), raw.as_slice());
+}
+
+// RawDataTyped is built infallibly from the raw bytes; the JSON error surfaces only from
+// deserialize_json(), never at construction.
+#[test]
+fn raw_data_typed_defers_json_error_to_deserialize() {
+    let good: RawDataTyped<Vec<i32>> = b"[1,2,3]".to_vec().into();
+    assert_eq!(good.deserialize_json().unwrap(), vec![1, 2, 3]);
+
+    // Construction of an ill-formed payload still succeeds (infallible)...
+    let bad: RawDataTyped<Vec<i32>> = b"not json at all".to_vec().into();
+    // ...and only deserialize_json() reports the JSON error.
+    match bad.deserialize_json() {
+        Err(HttpParseError::CanNotParseValue { .. }) => {}
+        other => panic!("expected a JSON parse error from deserialize_json, got {:?}", other),
+    }
+}
+

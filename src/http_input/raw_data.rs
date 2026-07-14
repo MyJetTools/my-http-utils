@@ -26,6 +26,15 @@ impl From<RawData> for Vec<u8> {
     }
 }
 
+/// The whole `#[http_body_raw]` body, verbatim — **infallible**. It's a `From`, so std's blanket
+/// gives `TryFrom<Vec<u8>>` with `Error = Infallible`, which the derive's uniform `.try_into()?`
+/// picks up (unified into `HttpParseError` via `From<Infallible>`). RawData never fails to build.
+impl From<Vec<u8>> for RawData {
+    fn from(data: Vec<u8>) -> Self {
+        Self::new(data)
+    }
+}
+
 impl AsRef<[u8]> for RawData {
     fn as_ref(&self) -> &[u8] {
         self.0.as_ref()

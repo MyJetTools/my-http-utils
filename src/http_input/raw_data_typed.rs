@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use serde::de::DeserializeOwned;
 
 use crate::http_input::core::convert_from_str;
+use crate::http_input::core::data_src::SRC_BODY;
 use crate::http_input::HttpParseError;
 
 /// Raw bytes that additionally know they can be deserialized into `T` on demand. Ported from
@@ -46,6 +47,16 @@ impl<T: DeserializeOwned> RawDataTyped<T> {
 impl<T: DeserializeOwned> From<RawDataTyped<T>> for Vec<u8> {
     fn from(value: RawDataTyped<T>) -> Self {
         value.data
+    }
+}
+
+/// The whole `#[http_body_raw]` body, verbatim — **infallible to build**: it only stores the raw
+/// bytes. Unlike [`RawData`], this type *can* surface a JSON error, but only later and only from
+/// [`Self::deserialize_json`] — that is the single place `T` is actually parsed. (`From`, so the
+/// derive's uniform `.try_into()?` uses std's `TryFrom<Vec<u8>>` with `Error = Infallible`.)
+impl<T: DeserializeOwned> From<Vec<u8>> for RawDataTyped<T> {
+    fn from(data: Vec<u8>) -> Self {
+        Self::new(data, SRC_BODY)
     }
 }
 
