@@ -108,7 +108,9 @@ impl<'s> TryInto<FileContent> for HttpInputValue<'s> {
                     )))
                 }
             },
-            other => Err(HttpParseError::NotSupportedContentType(format!(
+            // A file can not be read out of a query-string / header / JSON value — the reference
+            // server answered 403 here, so use Forbidden (not the 415 NotSupportedContentType).
+            other => Err(HttpParseError::Forbidden(format!(
                 "Can not read a file out of {}",
                 other.get_src()
             ))),

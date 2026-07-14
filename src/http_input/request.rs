@@ -1,5 +1,6 @@
 use crate::url_encoded_data_reader::UrlEncodedValue;
 
+use super::body_content::{BodyContentType, HttpRequestBodyContent};
 use super::data_src::{SRC_HEADER, SRC_PATH};
 use super::{HttpInputValue, HttpParseError};
 
@@ -63,4 +64,17 @@ pub fn read_header_required<'s, R: THttpRequest + ?Sized>(
     name: &'static str,
 ) -> Result<HttpInputValue<'s>, HttpParseError> {
     read_header_optional(request, name).ok_or_else(|| HttpParseError::required(name, SRC_HEADER))
+}
+
+/// The whole request body as [`HttpRequestBodyContent`], for a non-Option `#[http_body_raw]`
+/// field. Unlike [`super::BodyReader`] this does **not** parse the body per content-type — the raw
+/// body is handed straight to the field's `TryInto` (bytes / String / a JSON deserialize of the
+/// whole body), so an array/scalar/binary/malformed body is never rejected up front.
+pub fn read_raw_body<R: THttpRequest + ?Sized>(request: &R) -> HttpRequestBodyContent {
+    let content_type = request
+        .get_content_type()
+        .and_then(|c| BodyContentType::from_content_type(c).ok())
+        .unwrap_or(BodyContentType::Unknown);
+
+    HttpRequestBodyContent::new(request.get_body().to_vec(), content_type)
 }

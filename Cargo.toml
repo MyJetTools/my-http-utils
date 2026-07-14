@@ -14,7 +14,9 @@ default = []
 # `READS_BODY`). Off by default so wasm clients pull only the schema + client request builder.
 # The whole `http_input` layer is wasm-safe (no hyper/tokio), so enabling `server` still
 # compiles for `wasm32-unknown-unknown` — it is simply not needed by browser clients.
-server = ["http-request-schema-macros/server"]
+# `serde_json/raw_value` lets the JSON body reader keep each member's verbatim source text
+# (exact number scale/precision + byte-for-byte sub-documents), matching the original reader.
+server = ["http-request-schema-macros/server", "serde_json/raw_value"]
 
 [dependencies]
 rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }

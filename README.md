@@ -139,13 +139,17 @@ get a `TryFrom<HttpInputValue>` so they parse too.
 |---|---|
 | `http_input::THttpRequest` | the one trait the server (or a test) implements |
 | `http_input::HttpInputValue` | a single read value, before conversion to a field's type |
-| `http_input::HttpParseError` | parse failure: `RequiredParameterIsMissing{name,src}`, `CanNotParseValue{name,src,value}`, `UrlDecodeError`, `InvalidBodyFormat`, `NotSupportedContentType`, `Validation` |
+| `http_input::HttpParseError` | parse failure: `RequiredParameterIsMissing{name,src}`, `CanNotParseValue{name,src,value}`, `UrlDecodeError`, `InvalidBodyFormat`, `NotSupportedContentType`, `Forbidden`, `Validation` |
 | `http_input::HttpRequestBodyContent` | the whole raw body, for `#[http_body_raw]` |
 | `http_input::data_src::SRC_*` | source tags carried by values/errors (`Path`, `QueryString`, `Header`, `BodyJson`, …) |
 
 `HttpParseError` keeps enough data (`name` / `src` / `value`) for the server to rebuild the exact
 same `HttpFailResult` (status + text) it used to produce inline, via its own
 `From<HttpParseError> for HttpFailResult`.
+
+JSON body members are read from their **verbatim source text** (`serde_json`'s `raw_value`), so a
+number keeps its exact scale/precision (`100.00` stays `100.00`; a 128-bit integer isn't rounded
+through `f64`) and a `RawData` / `RawDataTyped` field gets the member's original bytes untouched.
 
 **Per-source semantics** (1:1 with the old server codegen):
 

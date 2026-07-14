@@ -306,3 +306,62 @@ fn missing_required_path() {
 fn reads_body_false_for_query_only_model() {
     assert!(!RequiredQuery::READS_BODY);
 }
+
+// ---- regressions from the adversarial review -------------------------------
+
+use my_http_utils::http_input::{BodyReader, FileContent, QueryStringReader, RawData};
+
+// Non-Option #[http_body_raw] must take the whole body verbatim, NOT route through the
+// content-type-parsing BodyReader — which would reject a non-object JSON body even though the
+// raw field's own conversion handles it fine. (`String` is used so the same model still builds
+// as a client request.)
+#[derive(MyHttpInput)]
+struct RawStringBody {
+    #[http_body_raw(description = "")]
+    body: String,
+}
+
+#[test]
+fn raw_body_accepts_non_object_json_under_json_content_type() {
+    // A JSON array with Content-Type: application/json — the old code sniffed "json", tried to
+    // parse it as a body object, and failed. Now the raw body is taken verbatim.
+    let request = FakeRequest::default().body("application/json", b"[1,2,3]".to_vec());
+    let model = RawStringBody::parse(&request).unwrap();
+    assert_eq!(model.body, "[1,2,3]");
+}
+
+// JSON number members keep their exact source text (no f64 rounding), and a whole-value
+// deserialize (Vec<u128>) survives values outside i64/u64 range. Exercised at the reader level,
+// since RawData / u128 aren't client-buildable field types.
+#[test]
+fn json_number_precision_is_preserved() {
+    let reader = BodyReader::from_parts(
+        br#"{"amount":100.00,"ids":[123456789012345678901234567890]}"#,
+        Some("application/json"),
+    )
+    .unwrap();
+
+    let amount: String = reader.get_required("amount").unwrap().try_into().unwrap();
+    assert_eq!(amount, "100.00", "exact scale, not f64-rounded 100.0");
+
+    let ids: Vec<u128> = reader.get_required("ids").unwrap().try_into().unwrap();
+    assert_eq!(ids, vec![123456789012345678901234567890u128]);
+}
+
+// RawData over a JSON member returns the verbatim source bytes (no key reordering / re-escaping).
+#[test]
+fn json_member_rawdata_is_verbatim() {
+    let reader =
+        BodyReader::from_parts(br#"{"cfg":{"b":1,"a":2}}"#, Some("application/json")).unwrap();
+    let cfg: RawData = reader.get_required("cfg").unwrap().try_into().unwrap();
+    assert_eq!(cfg.as_slice(), br#"{"b":1,"a":2}"#, "verbatim, not re-serialized");
+}
+
+// Reading a file out of a non-form-data value is Forbidden (403), not NotSupportedContentType.
+#[test]
+fn file_from_query_value_is_forbidden() {
+    let query = QueryStringReader::new("f=x").unwrap();
+    let value = query.get_required("f").unwrap();
+    let result: Result<FileContent, _> = value.try_into();
+    assert!(matches!(result, Err(HttpParseError::Forbidden(_))));
+}

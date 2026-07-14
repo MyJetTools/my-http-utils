@@ -28,6 +28,8 @@ pub use body_reader::BodyReader;
 pub use error::HttpParseError;
 pub use json_encoded_data::{JsonEncodedData, JsonEncodedValueAsString};
 pub use query_reader::QueryStringReader;
-pub use request::{read_header_optional, read_header_required, read_path_value, THttpRequest};
+pub use request::{
+    read_header_optional, read_header_required, read_path_value, read_raw_body, THttpRequest,
+};
 pub use types::{FileContent, RawData, RawDataTyped};
 pub use value::HttpInputValue;

@@ -1,36 +1,33 @@
-use serde_json::Value;
+use std::collections::HashMap;
+
+use serde_json::value::RawValue;
 
 use crate::http_input::data_src::SRC_BODY_JSON;
 use crate::http_input::HttpParseError;
 
 use super::JsonEncodedValueAsString;
 
-/// A parsed JSON request body, viewed as a set of named members. Null members are dropped so
-/// that `get_optional` reports them as absent (matching the original `my-json`-based reader).
+/// A parsed JSON request body, viewed as a set of named members. Each member keeps its verbatim
+/// source text (see [`JsonEncodedValueAsString`]); null members are dropped so `get_optional`
+/// reports them as absent (matching the original reader).
 pub struct JsonEncodedData<'s> {
     values: Vec<JsonEncodedValueAsString<'s>>,
 }
 
 impl<'s> JsonEncodedData<'s> {
     pub fn from_slice(raw: &[u8]) -> Result<Self, HttpParseError> {
-        let root: Value = serde_json::from_slice(raw)
+        // Deserialize the top-level object into raw (un-parsed) members. A non-object body is an
+        // error here — named body fields need an object (the whole-body `#[http_body_raw]` path
+        // does not go through this reader).
+        let object: HashMap<String, Box<RawValue>> = serde_json::from_slice(raw)
             .map_err(|err| HttpParseError::InvalidBodyFormat(format!("Can not parse Json body. {}", err)))?;
 
-        let object = match root {
-            Value::Object(map) => map,
-            _ => {
-                return Err(HttpParseError::InvalidBodyFormat(
-                    "Json body is expected to be an object".to_string(),
-                ))
-            }
-        };
-
         let mut values = Vec::with_capacity(object.len());
-        for (name, value) in object {
-            if value.is_null() {
+        for (name, raw_value) in object {
+            if raw_value.get() == "null" {
                 continue;
             }
-            values.push(JsonEncodedValueAsString::new(name, value));
+            values.push(JsonEncodedValueAsString::new(name, raw_value));
         }
 
         Ok(Self { values })

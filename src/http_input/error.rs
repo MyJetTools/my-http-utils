@@ -26,8 +26,11 @@ pub enum HttpParseError {
     /// (e.g. malformed JSON, non-UTF-8 url-encoded body).
     InvalidBodyFormat(String),
     /// The value/body can not be converted to the requested type given its content type
-    /// (e.g. asking for a file out of a JSON field).
+    /// (e.g. a form-data value where a file was expected).
     NotSupportedContentType(String),
+    /// The conversion is forbidden for this source (e.g. reading a file out of a query-string or
+    /// JSON value) — the reference server answered 403 here, so this maps back to `as_forbidden`.
+    Forbidden(String),
     /// A field `validator` rejected the value.
     Validation(String),
 }
@@ -114,6 +117,7 @@ impl std::fmt::Display for HttpParseError {
             Self::UrlDecodeError(msg) => write!(f, "Url decode error: {}", msg),
             Self::InvalidBodyFormat(msg) => write!(f, "Invalid body format: {}", msg),
             Self::NotSupportedContentType(msg) => write!(f, "Not supported content type: {}", msg),
+            Self::Forbidden(msg) => write!(f, "Forbidden: {}", msg),
             Self::Validation(msg) => write!(f, "Validation error: {}", msg),
         }
     }

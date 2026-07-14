@@ -57,11 +57,25 @@ pub fn generate_parse(
     }
 
     // ---- body: json / form-data (named fields) and/or raw (whole body) ----
+    // READS_BODY is true whenever the model touches the body at all.
     let reads_body = props.body_fields.is_some()
         || props.form_data_fields.is_some()
         || props.body_raw_field.is_some();
 
-    if reads_body {
+    // The parsing `BodyReader` (content-type dispatch) is only needed for reading NAMED body
+    // fields — json / form-data, or an Option `#[http_body_raw]` (which reads a named field).
+    // A non-Option `#[http_body_raw]` takes the whole body verbatim via `read_raw_body` and must
+    // NOT go through the reader, whose eager JSON/url-encoded parse would reject a non-object /
+    // malformed / binary body that the field's own `TryInto` handles fine.
+    let body_raw_is_option = props
+        .body_raw_field
+        .as_ref()
+        .map(|f| f.property.ty.is_option())
+        .unwrap_or(false);
+    let needs_body_reader =
+        props.body_fields.is_some() || props.form_data_fields.is_some() || body_raw_is_option;
+
+    if needs_body_reader {
         reads.push(quote! {
             let __body = my_http_utils::http_input::BodyReader::from_parts(
                 request.get_body(),
@@ -248,7 +262,8 @@ fn read_body_raw(field: &InputField) -> Result<TokenStream, syn::Error> {
             }
         })
     } else {
-        Ok(quote!(#ident: __body.raw_body().try_into()?))
+        // Non-Option: the whole body, verbatim (no content-type parsing).
+        Ok(quote!(#ident: my_http_utils::http_input::read_raw_body(request).try_into()?))
     }
 }
 

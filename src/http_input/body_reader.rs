@@ -1,7 +1,7 @@
 use crate::form_data_reader::FormDataReader;
 use crate::url_encoded_data_reader::UrlEncodedDataReader;
 
-use super::body_content::{BodyContentType, HttpRequestBodyContent};
+use super::body_content::BodyContentType;
 use super::data_src::{SRC_BODY, SRC_BODY_JSON, SRC_BODY_URL_ENCODED};
 use super::json_encoded_data::JsonEncodedData;
 use super::{HttpInputValue, HttpParseError};
@@ -14,13 +14,12 @@ enum ParsedBody<'s> {
     Empty,
 }
 
-/// Reads model fields out of a request body — JSON, `x-www-form-urlencoded`, or
+/// Reads NAMED model fields out of a request body — JSON, `x-www-form-urlencoded`, or
 /// `multipart/form-data`, dispatched by content type. Built by the derive-generated `parse`
-/// from `request.get_body()` + `request.get_content_type()`. Also serves the whole-body view
-/// for `#[http_body_raw]` via [`Self::raw_body`].
+/// from `request.get_body()` + `request.get_content_type()`. (A non-Option `#[http_body_raw]`
+/// field does not use this — it takes the whole body via [`super::read_raw_body`], which never
+/// parses per content-type.)
 pub struct BodyReader<'s> {
-    raw: &'s [u8],
-    content_type: BodyContentType,
     inner: ParsedBody<'s>,
 }
 
@@ -58,11 +57,8 @@ impl<'s> BodyReader<'s> {
             BodyContentType::Empty => ParsedBody::Empty,
         };
 
-        Ok(Self {
-            raw,
-            content_type,
-            inner,
-        })
+        let _ = content_type; // consumed while building `inner`; not retained
+        Ok(Self { inner })
     }
 
     pub fn get_optional(&'s self, name: &'static str) -> Option<HttpInputValue<'s>> {
@@ -92,10 +88,5 @@ impl<'s> BodyReader<'s> {
                 .get_optional(name)
                 .ok_or_else(|| HttpParseError::required(name, SRC_BODY)),
         }
-    }
-
-    /// The whole body, for `#[http_body_raw]` non-Option fields.
-    pub fn raw_body(&self) -> HttpRequestBodyContent {
-        HttpRequestBodyContent::new(self.raw.to_vec(), self.content_type.clone())
     }
 }
