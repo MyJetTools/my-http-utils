@@ -67,10 +67,10 @@ pub fn read_header_required<'s, R: THttpRequest + ?Sized>(
 }
 
 /// The whole request body as raw bytes, for a non-Option `#[http_body_raw]` field. The bytes are
-/// handed straight to the field's conversion — `Vec<u8>` verbatim, `RawData` / `RawDataTyped` via
-/// `From<Vec<u8>>`, `String` via a utf-8 `TryFrom` — with **no** content-type parsing, so an
-/// array / scalar / binary / malformed body is never rejected up front (unlike [`super::BodyReader`],
-/// which does dispatch on content type for *named* body fields).
+/// handed straight to the field's [`super::FromRawBody`] conversion — `Vec<u8>` verbatim,
+/// `RawData` / `RawDataTyped` keep the bytes untouched, `String` via a utf-8 check — with **no**
+/// content-type parsing, so an array / scalar / binary / malformed body is never rejected up front
+/// (unlike [`super::BodyReader`], which does dispatch on content type for *named* body fields).
 pub fn read_raw_body<R: THttpRequest + ?Sized>(request: &R) -> Vec<u8> {
     request.get_body().to_vec()
 }

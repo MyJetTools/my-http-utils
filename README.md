@@ -150,7 +150,7 @@ get a `TryFrom<HttpInputValue>` so they parse too.
 | `http_input::core::THttpRequest` | the one trait the server (or a test) implements |
 | `http_input::HttpInputValue` | a single read value, before conversion to a field's type |
 | `http_input::HttpParseError` | parse failure: `RequiredParameterIsMissing{name,src}`, `CanNotParseValue{name,src,value}`, `UrlDecodeError`, `InvalidBodyFormat`, `NotSupportedContentType`, `Forbidden`, `Validation` |
-| `http_input::{RawData, RawDataTyped<T>, FileContent}` | body/file field types: verbatim bytes / bytes that deserialize into `T` on demand / an uploaded `multipart/form-data` file |
+| `http_input::{RawData, RawDataTyped<T>, FileContent}` | body/file field types: verbatim bytes / verbatim bytes the handler turns into `T` on demand via `RawDataTyped::deserialize_json` / an uploaded `multipart/form-data` file |
 | `http_input::PasswordHttpInputField` | a ready-made `#[http_input_field]` type — a `String` rendered as OpenAPI `password` |
 | `http_input::core::data_src::SRC_*` | source tags carried by values/errors (`Path`, `QueryString`, `Header`, `BodyJson`, …) |
 
@@ -158,7 +158,8 @@ get a `TryFrom<HttpInputValue>` so they parse too.
 same `HttpFailResult` (status + text) it used to produce inline, via its own
 `From<HttpParseError> for HttpFailResult`.
 
-JSON body members are read from their **verbatim source text** (`serde_json`'s `raw_value`), so a
+JSON body members are read from their **verbatim source text** (via `my-json`'s zero-copy
+`JsonValueRef`), so a
 number keeps its exact scale/precision (`100.00` stays `100.00`; a 128-bit integer isn't rounded
 through `f64`) and a `RawData` / `RawDataTyped` field gets the member's original bytes untouched.
 
@@ -168,11 +169,13 @@ through `f64`) and a `RawData` / `RawDataTyped` field gets the member's original
 - `#[http_query]` — Option / required / `default`; `Vec<T>` reads every repeat of the name.
 - `#[http_header]` — Option / required / `default`; case-insensitive, taken verbatim.
 - `#[http_body]` / `#[http_form_data]` — named body fields; the impl dispatches JSON vs form-data.
-- `#[http_body_raw]` — non-Option takes the **whole body verbatim as `Vec<u8>`** and converts from
-  those bytes: `Vec<u8>` as-is, `RawData` / `RawDataTyped<T>` via infallible `From<Vec<u8>>` (any JSON
-  error surfaces later, only from `RawDataTyped::deserialize_json`), `String` via a utf-8 check. No
-  content-type parsing, so a binary / non-object body is never rejected up front. An **Option**
-  `#[http_body_raw]` reads a *named* body field instead.
+- `#[http_body_raw]` — non-Option takes the **whole body verbatim as `Vec<u8>`** and builds the field
+  from those bytes via the crate-local `FromRawBody`: `Vec<u8>` as-is, `RawData` / `RawDataTyped<T>`
+  keep the bytes untouched, `String` via a utf-8 check. No content-type parsing, so a binary /
+  non-object body is never rejected up front. **`RawDataTyped<T>` defers JSON parsing:** `parse` only
+  stores the raw body, so the server handler must call `body.deserialize_json()` to get the typed `T`
+  — that is the single place `T` is produced and where a JSON error (if any) surfaces, never during
+  `parse`. An **Option** `#[http_body_raw]` reads a *named* body field instead.
 - `trim` / `to_lowercase` / `to_uppercase` apply to `String` fields after reading.
 
 **Validators.** `validator = "fn"` uses the **same** contract as the client builder —
@@ -261,6 +264,34 @@ let request = InMemory {
 let model = AddUser::parse(&request)?;      // notify = true, name = "John"
 assert!(AddUser::READS_BODY);               // it has an http_body field
 ```
+
+### Read a typed raw body with `deserialize_json` (`server` feature)
+
+A `#[http_body_raw]` field typed as `RawDataTyped<T>` captures the **whole body verbatim**; `parse`
+does *not* parse the JSON. The server handler turns it into `T` on demand via `deserialize_json()` —
+the single place `T` is produced, and where a JSON error (if any) surfaces:
+
+```rust
+use my_http_utils::http_input::RawDataTyped;
+use my_http_utils::macros::*;
+use serde::Deserialize;
+
+#[derive(Deserialize, MyHttpObjectStructure)]        // server side needs only Deserialize
+struct AuditFilter { account_id: String, limit: i32 }
+
+#[derive(MyHttpInput)]
+struct QueryAudit {
+    // the whole body IS this one field; OpenAPI shows `AuditFilter`'s structure
+    #[http_body_raw(description = "Audit query filter")]
+    body: RawDataTyped<AuditFilter>,
+}
+
+let model = QueryAudit::parse(&request)?;                  // body captured verbatim, not yet parsed
+let filter: AuditFilter = model.body.deserialize_json()?; // <- deserialize in the handler
+```
+
+To *build* the same model as a client request, add `Serialize` to the payload and use `into()`
+(`RawDataTyped<T>: From<T>` serialises it into the body): `QueryAudit { body: filter.into() }`.
 
 ## wasm
 

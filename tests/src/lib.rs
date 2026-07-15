@@ -369,11 +369,10 @@ mod tests {
     }
 
     #[test]
-    fn raw_data_typed_body_serializes_verbatim() {
-        // The client builder's raw-body branch does `serde_json::to_vec(&field)`; our `Serialize`
-        // borrows the stored bytes as a `RawValue`, so the outgoing body is the input JSON verbatim
-        // — no key reordering (note `b` precedes `a` below and stays that way). The payload has no
-        // surrounding whitespace, so byte-for-byte equality holds.
+    fn raw_data_typed_body_bytes_are_sent_verbatim() {
+        // The client raw-body branch moves the stored bytes straight out via `RawDataTyped ->
+        // Into<Vec<u8>>` (no serde, no re-encoding), so a body built from raw bytes is sent
+        // byte-for-byte — key order preserved (`b` precedes `a` below and stays that way).
         let stored = br#"{"b":"x","a":7}"#.to_vec();
         let body = RawTypedBodyModel {
             body: my_http_utils::http_input::RawDataTyped::from_slice(&stored, "Body"),

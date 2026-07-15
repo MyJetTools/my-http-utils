@@ -103,9 +103,8 @@ impl From<ReadingFromDataError> for HttpParseError {
     }
 }
 
-/// A `#[http_body_raw]` field of type `Vec<u8>` converts via std's reflexive
-/// `TryFrom<Vec<u8>> for Vec<u8>` (`Error = Infallible`); this lets the derive's uniform
-/// `.try_into()?` unify that arm into `HttpParseError`. It never actually constructs a value.
+/// Bridges std's `Infallible` into `HttpParseError` so any `TryInto` whose `Error = Infallible`
+/// unifies through `?` in a context that yields `HttpParseError`. Never actually constructs a value.
 impl From<std::convert::Infallible> for HttpParseError {
     fn from(never: std::convert::Infallible) -> Self {
         match never {}

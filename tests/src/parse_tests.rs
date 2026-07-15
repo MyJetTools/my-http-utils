@@ -433,14 +433,15 @@ fn raw_body_vec_u8_is_verbatim_bytes() {
     assert_eq!(model.data, raw, "verbatim bytes, not JSON-decoded");
 }
 
-// RawData is built from the raw bytes infallibly (From<Vec<u8>>). Exercised here at the conversion
-// level — the `.try_into()?` path the derive uses for a `#[http_body_raw]` field.
+// RawData builds from raw bytes infallibly. Direct `Vec<u8>` → `RawData` conversions still exist
+// (`From<Vec<u8>>` and its blanket `TryFrom`); the server derive itself now builds the field via
+// `FromRawBody` (see from_raw_body.rs), but these remain for direct use.
 #[test]
 fn raw_data_from_vec_is_infallible_and_verbatim() {
     let raw = vec![9u8, 8, 7, 0, 200];
     let rd: RawData = raw.clone().into();
     assert_eq!(rd.as_slice(), raw.as_slice());
-    // and the derive's uniform `.try_into()?` path (std TryFrom, Error = Infallible) also holds:
+    // the blanket `TryFrom<Vec<u8>>` (Error = Infallible) that comes from that `From` also holds:
     let rd2: RawData = raw.clone().try_into().unwrap();
     assert_eq!(rd2.as_slice(), raw.as_slice());
 }
