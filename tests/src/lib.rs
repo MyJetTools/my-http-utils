@@ -141,6 +141,20 @@ mod tests {
         data: Vec<u8>,
     }
 
+    // A typed raw body. `Deserialize` + `MyHttpObjectStructure` cover the server + schema; `Serialize`
+    // enables the client `payload.into()` build path (serialise a value straight into the body).
+    #[derive(serde::Serialize, serde::Deserialize, MyHttpObjectStructure)]
+    struct RawTypedPayload {
+        a: i32,
+        b: String,
+    }
+
+    #[derive(MyHttpInput)]
+    struct RawTypedBodyModel {
+        #[http_body_raw(description = "")]
+        body: my_http_utils::http_input::RawDataTyped<RawTypedPayload>,
+    }
+
     #[derive(MyHttpInput)]
     struct EmptyBodyModel {
         #[http_query(name = "q", description = "")]
@@ -349,6 +363,50 @@ mod tests {
             HttpRequestBody::Raw { data, content_type } => {
                 assert_eq!(data, vec![1, 2, 3, 4]);
                 assert!(content_type.is_none());
+            }
+            _ => panic!("expected Raw"),
+        }
+    }
+
+    #[test]
+    fn raw_data_typed_body_serializes_verbatim() {
+        // The client builder's raw-body branch does `serde_json::to_vec(&field)`; our `Serialize`
+        // borrows the stored bytes as a `RawValue`, so the outgoing body is the input JSON verbatim
+        // — no key reordering (note `b` precedes `a` below and stays that way). The payload has no
+        // surrounding whitespace, so byte-for-byte equality holds.
+        let stored = br#"{"b":"x","a":7}"#.to_vec();
+        let body = RawTypedBodyModel {
+            body: my_http_utils::http_input::RawDataTyped::from_slice(&stored, "Body"),
+        }
+        .get_body::<FixedRnd>()
+        .unwrap();
+        match body {
+            HttpRequestBody::Raw { data, content_type } => {
+                assert_eq!(data, stored, "verbatim JSON, not re-serialized/reordered");
+                assert_eq!(content_type, Some("application/json"));
+            }
+            _ => panic!("expected Raw"),
+        }
+    }
+
+    #[test]
+    fn raw_data_typed_client_from_value_serializes_into_body() {
+        // The client builds RawDataTyped<T> straight from a typed value via `into()` (which
+        // serialises the value inside the `From<T>`); get_body then sends those JSON bytes as the
+        // body, tagged application/json.
+        let payload = RawTypedPayload {
+            a: 7,
+            b: "x".to_string(),
+        };
+        let body = RawTypedBodyModel { body: payload.into() }
+            .get_body::<FixedRnd>()
+            .unwrap();
+        match body {
+            HttpRequestBody::Raw { data, content_type } => {
+                let v: serde_json::Value = serde_json::from_slice(&data).unwrap();
+                assert_eq!(v["a"], 7);
+                assert_eq!(v["b"], "x");
+                assert_eq!(content_type, Some("application/json"));
             }
             _ => panic!("expected Raw"),
         }

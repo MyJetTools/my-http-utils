@@ -50,12 +50,15 @@ impl<T: DeserializeOwned> From<RawDataTyped<T>> for Vec<u8> {
     }
 }
 
-/// The whole `#[http_body_raw]` body, verbatim — **infallible to build**: it only stores the raw
-/// bytes. Unlike [`RawData`], this type *can* surface a JSON error, but only later and only from
-/// [`Self::deserialize_json`] — that is the single place `T` is actually parsed. (`From`, so the
-/// derive's uniform `.try_into()?` uses std's `TryFrom<Vec<u8>>` with `Error = Infallible`.)
-impl<T: DeserializeOwned> From<Vec<u8>> for RawDataTyped<T> {
-    fn from(data: Vec<u8>) -> Self {
+/// Client direction: build the typed raw body straight from a `T` (`payload.into()`), serialising
+/// it into the JSON bytes the request will carry. Serialisation of a well-formed model never fails,
+/// so a failure is a programmer error (a broken `Serialize`) — we panic rather than thread an error
+/// no caller can sensibly handle. The *server* direction (whole body `Vec<u8>` → this type) is the
+/// crate-local [`crate::http_input::core::FromRawBody`], so this `From<T>` does not clash with it.
+impl<T: serde::Serialize + DeserializeOwned> From<T> for RawDataTyped<T> {
+    fn from(value: T) -> Self {
+        let data = serde_json::to_vec(&value)
+            .expect("RawDataTyped<T>: T failed to serialize into the request body");
         Self::new(data, SRC_BODY)
     }
 }
@@ -63,5 +66,18 @@ impl<T: DeserializeOwned> From<Vec<u8>> for RawDataTyped<T> {
 impl<T: DeserializeOwned> AsRef<[u8]> for RawDataTyped<T> {
     fn as_ref(&self) -> &[u8] {
         self.data.as_ref()
+    }
+}
+
+/// Schema (server-only). Lets `#[http_body_raw] body: RawDataTyped<Model>` drive OpenAPI: the
+/// derive's schema codegen calls `<FieldType>::get_data_type()`, and for a typed raw body the body
+/// param's data type is simply the inner model's — so Swagger renders `Model`'s structure. Gated on
+/// `server` because `DataTypeProvider` / `HttpDataType` only exist there.
+#[cfg(feature = "server")]
+impl<T: DeserializeOwned + crate::schema::data_types::DataTypeProvider>
+    crate::schema::data_types::DataTypeProvider for RawDataTyped<T>
+{
+    fn get_data_type() -> crate::schema::data_types::HttpDataType {
+        T::get_data_type()
     }
 }

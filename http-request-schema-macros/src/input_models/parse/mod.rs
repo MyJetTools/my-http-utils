@@ -263,10 +263,14 @@ fn read_body_raw(field: &InputField) -> Result<TokenStream, syn::Error> {
         })
     } else {
         // Non-Option: the whole body, verbatim (no content-type parsing). `read_raw_body` returns
-        // the raw `Vec<u8>` and we convert *from that*, so `Vec<u8>` = the bytes as-is (std
-        // reflexive), `RawData` / `RawDataTyped` = infallible `From<Vec<u8>>`, and `String` = std's
-        // utf-8 `TryFrom`. Byte source, so a raw `Vec<u8>` is never mis-routed through a JSON decode.
-        Ok(quote!(#ident: my_http_utils::http_input::core::read_raw_body(request).try_into()?))
+        // the raw `Vec<u8>`; the field type builds itself from those bytes via the crate-local
+        // `FromRawBody` — `Vec<u8>` = the bytes as-is, `RawData` / `RawDataTyped` = verbatim (the
+        // JSON error, if any, is deferred to `RawDataTyped::deserialize_json`), `String` = a utf-8
+        // check. `FromRawBody` (not `TryFrom<Vec<u8>>`) keeps std's `From` free for the client-side
+        // `From<T>` on `RawDataTyped<T>`. Byte source, so a raw body is never mis-routed via JSON.
+        Ok(quote!(#ident: my_http_utils::http_input::core::FromRawBody::from_raw_body(
+            my_http_utils::http_input::core::read_raw_body(request)
+        )?))
     }
 }
 

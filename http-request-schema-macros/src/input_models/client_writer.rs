@@ -280,6 +280,17 @@ fn generate_get_body(props: &HttpInputProperties) -> Result<TokenStream, syn::Er
                     }
                 },
             },
+            // `RawData` / `RawDataTyped<T>` carry the whole body as verbatim bytes and are only ever
+            // a `#[http_body_raw]` field (never nested in JSON), so their bytes go straight into
+            // `HttpRequestBody::Raw` via `Into<Vec<u8>>` — no `serde_json`, no `Serialize` on the
+            // type. `RawDataTyped` is the model's JSON (`application/json`); `RawData` is arbitrary
+            // bytes (no content type), matching the verbatim `Vec<u8>` arm above.
+            PropertyType::Struct(name, _) if name.as_str() == "RawDataTyped" => quote! {
+                my_http_utils::body::HttpRequestBody::Raw { data: self.#ident.into(), content_type: Some("application/json") }
+            },
+            PropertyType::Struct(name, _) if name.as_str() == "RawData" => quote! {
+                my_http_utils::body::HttpRequestBody::Raw { data: self.#ident.into(), content_type: None }
+            },
             _ => quote! {
                 match serde_json::to_vec(&self.#ident) {
                     Ok(__bytes) => my_http_utils::body::HttpRequestBody::Raw {

@@ -11,12 +11,14 @@ pub(crate) mod convert_from_str;
 
 mod body_reader;
 mod content_type;
+mod from_raw_body;
 mod mappers;
 mod query_reader;
 mod request;
 
 pub use content_type::{extract_web_form_boundary, BodyContentType};
 pub use body_reader::BodyReader;
+pub use from_raw_body::FromRawBody;
 pub use json_encoded_data::{JsonEncodedData, JsonEncodedValueAsString};
 pub use query_reader::QueryStringReader;
 pub use request::{

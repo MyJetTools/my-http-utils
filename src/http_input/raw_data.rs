@@ -40,3 +40,16 @@ impl AsRef<[u8]> for RawData {
         self.0.as_ref()
     }
 }
+
+/// Schema (server-only). A raw byte body carries no inner model, so it is described as OpenAPI
+/// `binary` (`type: string, format: binary`) — the standard shape for an arbitrary-bytes body, and
+/// what makes `#[http_body_raw] body: RawData` produce a schema at all (the derive calls
+/// `RawData::get_data_type()`). Gated on `server` like the rest of the schema layer.
+#[cfg(feature = "server")]
+impl crate::schema::data_types::DataTypeProvider for RawData {
+    fn get_data_type() -> crate::schema::data_types::HttpDataType {
+        crate::schema::data_types::HttpDataType::SimpleType(
+            crate::schema::data_types::HttpSimpleType::Binary,
+        )
+    }
+}

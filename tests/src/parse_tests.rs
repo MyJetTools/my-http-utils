@@ -433,8 +433,8 @@ fn raw_body_vec_u8_is_verbatim_bytes() {
     assert_eq!(model.data, raw, "verbatim bytes, not JSON-decoded");
 }
 
-// RawData is built from the raw bytes infallibly (From<Vec<u8>>). Exercised at the conversion level
-// (a RawData `#[http_body_raw]` model isn't client-buildable — RawData isn't Serialize).
+// RawData is built from the raw bytes infallibly (From<Vec<u8>>). Exercised here at the conversion
+// level — the `.try_into()?` path the derive uses for a `#[http_body_raw]` field.
 #[test]
 fn raw_data_from_vec_is_infallible_and_verbatim() {
     let raw = vec![9u8, 8, 7, 0, 200];
@@ -449,15 +449,68 @@ fn raw_data_from_vec_is_infallible_and_verbatim() {
 // deserialize_json(), never at construction.
 #[test]
 fn raw_data_typed_defers_json_error_to_deserialize() {
-    let good: RawDataTyped<Vec<i32>> = b"[1,2,3]".to_vec().into();
+    // Built from raw body bytes (the server direction) — infallible, no JSON parse yet.
+    let good: RawDataTyped<Vec<i32>> = RawDataTyped::from_slice(b"[1,2,3]", "Body");
     assert_eq!(good.deserialize_json().unwrap(), vec![1, 2, 3]);
 
     // Construction of an ill-formed payload still succeeds (infallible)...
-    let bad: RawDataTyped<Vec<i32>> = b"not json at all".to_vec().into();
+    let bad: RawDataTyped<Vec<i32>> = RawDataTyped::from_slice(b"not json at all", "Body");
     // ...and only deserialize_json() reports the JSON error.
     match bad.deserialize_json() {
         Err(HttpParseError::CanNotParseValue { .. }) => {}
         other => panic!("expected a JSON parse error from deserialize_json, got {:?}", other),
     }
+}
+
+// ---- #[http_body_raw] RawDataTyped<Model>: a typed raw body -----------------
+
+// A model that is `Deserialize + MyHttpObjectStructure`. Its structure feeds the OpenAPI schema of
+// the typed raw body, and `RawDataTyped<T>` deserializes the whole body into it on demand. Note it
+// derives no `Serialize` — the whole point is that a typed raw body needs only `Deserialize`.
+#[derive(serde::Deserialize, MyHttpObjectStructure)]
+struct AuditQueryParams {
+    account_id: String,
+    limit: i32,
+}
+
+// `#[http_body_raw] body: RawDataTyped<AuditQueryParams>` must compile (schema + client + server),
+// read the whole body verbatim into `RawDataTyped`, and hand OpenAPI the inner model's structure.
+#[derive(MyHttpInput)]
+struct QueryAuditInput {
+    #[http_body_raw(description = "Audit query filter")]
+    body: RawDataTyped<AuditQueryParams>,
+}
+
+#[test]
+fn raw_data_typed_body_parses_and_deserializes() {
+    let request =
+        FakeRequest::default().body("application/json", r#"{"account_id":"acc-1","limit":50}"#);
+    let model = QueryAuditInput::parse(&request).unwrap();
+
+    // The whole body is captured verbatim (no content-type parsing / re-encoding)...
+    assert_eq!(
+        model.body.as_slice(),
+        br#"{"account_id":"acc-1","limit":50}"#
+    );
+
+    // ...and deserialize_json() yields the typed model, unchanged from the derive's own path.
+    let params = model.body.deserialize_json().unwrap();
+    assert_eq!(params.account_id, "acc-1");
+    assert_eq!(params.limit, 50);
+
+    assert!(QueryAuditInput::READS_BODY);
+}
+
+#[test]
+fn raw_data_typed_body_schema_is_the_inner_models_object() {
+    // The OpenAPI schema for the raw-body param is the inner model's Object structure — not bytes.
+    let params = QueryAuditInput::get_input_params();
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].field.name, "body");
+    assert!(
+        matches!(params[0].field.data_type, HttpDataType::Object(_)),
+        "RawDataTyped<Model> schema must be the model's Object, got {:?}",
+        params[0].field.data_type
+    );
 }
 
