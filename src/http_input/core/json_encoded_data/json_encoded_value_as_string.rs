@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use my_json::json_reader::JsonValueRef;
+use my_json::json_reader::{JsonValueReader, JsonValueRef};
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use serde::de::DeserializeOwned;
 
@@ -14,7 +14,7 @@ use crate::http_input::HttpParseError;
 /// the request body — no per-member `Box`/`String`, no pre-parsed map. The member's **verbatim
 /// source text** survives: a number keeps its exact scale (`100.00`, not f64-rounded `100.0`) and
 /// its full width (a 128-bit integer is not squeezed through `i64`), and an object/array is handed
-/// over byte-for-byte. Scalars are converted from their raw text (via [`convert_from_str`]);
+/// over byte-for-byte. Scalars are converted from their raw text (via `convert_from_str`);
 /// object/array/wide-number values are deserialized from the raw slice by `serde_json` at the leaf
 /// (`my-json` itself has no serde dependency). Replaces the earlier `serde_json::value::RawValue`
 /// reader, so the crate no longer needs `serde_json/raw_value`.
@@ -109,5 +109,17 @@ impl<'s> JsonEncodedValueAsString<'s> {
     /// escaped source form, matching the original reader.
     pub fn as_bytes(&self) -> Vec<u8> {
         self.value.as_slice().to_vec()
+    }
+
+    /// Reads the member into `T` through `my-json` — the reader half of the same contract the
+    /// client's `JsonValueWriter` writes. This is what an object structure's
+    /// `TryFrom<HttpInputValue>` uses, so a nested object is written and read by one contract
+    /// instead of being written by `my-json` and read by serde.
+    pub fn read_json_value<T: JsonValueReader<'s>>(&self) -> Result<T, HttpParseError> {
+        T::from_json_value(&self.value).map_err(|err| HttpParseError::CanNotParseValue {
+            name: self.name.to_string(),
+            src: SRC_BODY_JSON,
+            value: format!("{:?}", err),
+        })
     }
 }

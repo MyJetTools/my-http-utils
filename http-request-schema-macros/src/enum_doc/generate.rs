@@ -65,6 +65,12 @@ pub fn generate(ast: &syn::DeriveInput, as_integer: bool) -> Result<TokenStream,
         quote::quote!()
     };
 
+    // serde, over the SAME string `as_str()` emits. Unconditional: an enum nested in an object
+    // structure is written by `JsonValueWriter` (this string) but read back by serde, and an enum
+    // inside a `RawDataTyped<T>` payload is serde on both sides — so the two must not disagree in
+    // any build.
+    let serde_impls = generate_serde_impls(struct_name, &fields)?;
+
     // Schema description of the enum — OpenAPI/Swagger, server only.
     let data_type_provider = if cfg!(feature = "server") {
         quote::quote! {
@@ -119,9 +125,143 @@ pub fn generate(ast: &syn::DeriveInput, as_integer: bool) -> Result<TokenStream,
         #data_type_provider
 
         #try_from_input
+
+        #serde_impls
     };
 
     Ok(result.into())
+}
+
+/// Emits `Serialize` / `Deserialize` over the enum's `http_enum_case` value — the same string
+/// `as_str()` and `JsonValueWriter` emit, and the same one the schema lists under `enum:`.
+///
+/// Why the derive owns serde instead of leaving it to the user: an enum nested inside an object
+/// structure is *written* by `JsonValueWriter` (the `value` string) and *read back* by serde. A
+/// user's `#[derive(Deserialize)]` keys off the Rust **variant name** instead, so the two disagree
+/// and the object fails to parse at runtime — `unknown variant \`bright-red\`, expected
+/// \`BrightRed\``. Owning both halves here is what keeps client, server, `TryFrom<HttpInputValue>`
+/// and Swagger on one string.
+///
+/// Deriving serde on such an enum is now a `conflicting implementations` error: that is deliberate,
+/// and the fix is to drop the `Serialize`/`Deserialize` from the derive list.
+///
+/// `Deserialize` accepts the `value` **or** the numeric `id`, matching `TryFrom<HttpInputValue>`
+/// (which takes both) — one behaviour, not two. It reads through `deserialize_any` so an id that
+/// arrives as a JSON number (`5`) is accepted alongside the string form (`"5"`).
+fn generate_serde_impls(
+    struct_name: &syn::Ident,
+    cases: &[EnumJson],
+) -> Result<proc_macro2::TokenStream, syn::Error> {
+    let struct_name_as_str = struct_name.to_string();
+
+    let mut arms = Vec::with_capacity(cases.len());
+    let mut expected = Vec::with_capacity(cases.len());
+
+    for case in cases {
+        let variant = case.src.get_name_ident();
+        let str_value = case.get_enum_case_str_value()?;
+
+        let mut patterns = vec![str_value.clone()];
+        if let Some(id) = case.attr.id.as_ref() {
+            if id != &str_value {
+                patterns.push(id.clone());
+            }
+        }
+        expected.push(format!("`{}`", str_value));
+
+        let patterns = patterns.iter().map(|p| quote::quote!(#p));
+        arms.push(quote::quote! {
+            #(#patterns)|* => Ok(#struct_name::#variant),
+        });
+    }
+
+    let expecting = format!("one of {} (or a case id)", expected.join(", "));
+
+    Ok(quote::quote! {
+        // my-json's reader: what an enum nested in an object structure is read through, since that
+        // object is now read by `JsonValueReader` rather than serde. Same `as_str()` string the
+        // writer emits, and the same value-or-id set `TryFrom<HttpInputValue>` accepts.
+        impl<'s> my_http_utils::my_json::json_reader::JsonValueReader<'s> for #struct_name {
+            fn from_json_value(
+                __value: &my_http_utils::my_json::json_reader::JsonValueRef<'s>,
+            ) -> Result<Self, my_http_utils::my_json::json_reader::JsonParseError> {
+                // A case id may arrive as a bare JSON number rather than a string.
+                let __owned;
+                let __s = match __value.as_unescaped_str() {
+                    Some(__s) => __s,
+                    None => {
+                        __owned = String::from_utf8_lossy(__value.as_slice()).into_owned();
+                        __owned.as_str()
+                    }
+                };
+
+                match __s {
+                    #(#arms)*
+                    __other => Err(my_http_utils::my_json::json_reader::JsonParseError::new(
+                        format!(
+                            "unknown value `{}` for {}, expected {}",
+                            __other, #struct_name_as_str, #expecting
+                        ),
+                    )),
+                }
+            }
+        }
+
+        impl my_http_utils::serde::Serialize for #struct_name {
+            fn serialize<__S: my_http_utils::serde::Serializer>(
+                &self,
+                __serializer: __S,
+            ) -> Result<__S::Ok, __S::Error> {
+                __serializer.serialize_str(self.as_str())
+            }
+        }
+
+        impl<'de> my_http_utils::serde::Deserialize<'de> for #struct_name {
+            fn deserialize<__D: my_http_utils::serde::Deserializer<'de>>(
+                __deserializer: __D,
+            ) -> Result<Self, __D::Error> {
+                struct __CaseVisitor;
+
+                impl<'de> my_http_utils::serde::de::Visitor<'de> for __CaseVisitor {
+                    type Value = #struct_name;
+
+                    fn expecting(&self, __f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        __f.write_str(#expecting)
+                    }
+
+                    fn visit_str<__E: my_http_utils::serde::de::Error>(
+                        self,
+                        __v: &str,
+                    ) -> Result<Self::Value, __E> {
+                        match __v {
+                            #(#arms)*
+                            __other => Err(__E::custom(format!(
+                                "unknown value `{}` for {}, expected {}",
+                                __other, #struct_name_as_str, #expecting
+                            ))),
+                        }
+                    }
+
+                    // A numeric case id (`5`), not just its string form (`"5"`).
+                    fn visit_i64<__E: my_http_utils::serde::de::Error>(
+                        self,
+                        __v: i64,
+                    ) -> Result<Self::Value, __E> {
+                        self.visit_str(__v.to_string().as_str())
+                    }
+
+                    fn visit_u64<__E: my_http_utils::serde::de::Error>(
+                        self,
+                        __v: u64,
+                    ) -> Result<Self::Value, __E> {
+                        self.visit_str(__v.to_string().as_str())
+                    }
+                }
+
+                __deserializer.deserialize_any(__CaseVisitor)
+            }
+        }
+    })
 }
 
 /// Emits `TryFrom<HttpInputValue>`: reads the value as a string and matches it against each

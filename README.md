@@ -24,9 +24,13 @@ markup. my-http-utils has no hyper/tokio/server dependencies, so models compile 
 - `server` — additionally: the **OpenAPI/Swagger schema** (`get_input_params` / `get_model_routes`
   / `DataTypeProvider`, the `schema::{data_types, in_parameters, out_results}` modules,
   `MyHttpObjectStructure` / `MyHttpInputObjectStructure`), the
-  [`http_input`](#server-side-parsing-server-feature) module, and the derive-generated **`parse`** /
-  `READS_BODY`. All of it is a server concern; all of it is still wasm-safe (no hyper/tokio), just
-  not compiled into clients that don't ask for it.
+  [`http_input`](#server-side-parsing-server-feature) **parse engine**, and the derive-generated
+  **`parse`** / `READS_BODY`. All of it is a server concern; all of it is still wasm-safe (no
+  hyper/tokio), just not compiled into clients that don't ask for it.
+
+  Note the `http_input` **field types** (`RawData`, `RawDataTyped<T>`, `FileContent`,
+  `HttpParseError`, `PasswordHttpInputField`) are **not** gated — a model shared between a client
+  and a server names them, so they must compile for a wasm client too. Only the engine is gated.
 
 ## Main types
 
@@ -35,9 +39,11 @@ markup. my-http-utils has no hyper/tokio/server dependencies, so models compile 
 | macro | what it's for |
 |---|---|
 | `MyHttpInput` | derive on a request model: emits the client request builder — plus, under the `server` feature, the schema and the sync `parse` |
-| `MyHttpObjectStructure` / `MyHttpInputObjectStructure` | describe a nested object used in a body/response |
+| `MyHttpInputObjectStructure` | a nested object **read from a request** (a `#[http_body]` field). Emits both halves of the wire contract — the client writer and the reader — plus the schema. Needs no serde |
+| `MyHttpObjectStructure` | a nested object **written to a response**. The writer and the schema, without the read half |
 | `MyHttpStringEnum` / `MyHttpIntegerEnum` | use an enum as a parameter value |
 | `#[http_input_field]` | define a custom `String`-wrapper field type (the built-in `PasswordHttpInputField` is one) |
+| `#[json_name("…")]` | name a nested object's field on the wire (see [Nested objects](#nested-objects-naming-keys-json_name)) |
 
 ### Field markup
 
@@ -65,6 +71,99 @@ value (trim → case → validator); `default` only marks the schema param non-r
 
 `#[http_path]` / `#[http_query]` / `#[http_header]` combine freely with any one body kind. Mixing
 two body kinds in one model is a **compile error** ("choose one of …").
+
+#### Three ways to describe a JSON body
+
+There is no separate "whole body" attribute for a JSON object — **the body is assembled from the
+fields you mark**. Which of these you want is usually decided by whether the payload has a name of
+its own:
+
+**1. Several `#[http_body]` fields — the fields together *are* the body.** Each one is a root key of
+the JSON object; no wrapper struct is involved. This is the common case:
+
+```rust
+#[derive(MyHttpInput)]
+pub struct CreateUser {
+    #[http_body(name = "name", description = "User name")]
+    pub name: String,
+    #[http_body(name = "age", description = "User age")]
+    pub age: u32,
+}
+// body: {"name":"John","age":42}
+```
+
+**2. A `#[http_body]` field typed as a nested object** — for a payload that has its own name and is
+worth describing (and showing in Swagger) as a model. The nested type derives
+`MyHttpInputObjectStructure`, and it composes freely with the flat fields above:
+
+```rust
+#[derive(MyHttpInputObjectStructure)]      // no serde needed
+pub struct BankCard {
+    pub card_number: String,
+    pub exp_month: String,
+}
+
+#[derive(MyHttpInput)]
+pub struct Pay {
+    #[http_body(name = "challengeId", description = "Challenge id")]
+    pub challenge_id: String,
+    #[http_body(name = "card", description = "Card to charge")]
+    pub card: Option<BankCard>,      // Option -> the key is omitted when None
+}
+// body: {"challengeId":"c1","card":{"card_number":"4111…","exp_month":"12"}}
+```
+
+**3. One `#[http_body_raw]` field — the body *is* that field**, verbatim, with no JSON object built
+around it (see [`RawDataTyped<T>`](#read-a-typed-raw-body-with-deserialize_json-server-feature)).
+
+Kinds 1 and 2 are the same kind and mix freely — both are `#[http_body]`. Kind 3 is exclusive with
+them: a model has either named body fields or one raw body, never both.
+
+### Nested objects: naming keys (`#[json_name]`)
+
+A nested `#[http_body]` object is written **and** read by the derive itself — `my-json` on both
+sides, no serde anywhere in this path. Both halves are generated from the same fields and the same
+keys, so they cannot drift apart.
+
+Name a key with **`#[json_name("…")]`**:
+
+```rust
+// No serde derive, and no `serde` dependency needed at all.
+#[derive(MyHttpInputObjectStructure)]
+pub struct BankCard {
+    #[json_name("cardNumber")]
+    pub card_number: String,
+    pub exp_month: String,     // no attribute -> the Rust field name
+}
+```
+
+`#[serde(rename = "…")]` and `#[serde(rename_all = "…")]` are honoured too, so a model that already
+carries them — or that also travels through serde inside a `RawDataTyped<T>` — needs no second
+spelling. All eight `rename_all` rules match serde byte for byte (`rename_all_matches_serde` in
+`tests/src/parse_tests.rs` asserts it against `serde_json`'s own output, including the two
+counter-intuitive ones: for *fields*, `lowercase` and `snake_case` are no-ops).
+
+Precedence: `#[json_name]` > `#[serde(rename)]` > `#[serde(rename_all)]` > the Rust field name. The
+OpenAPI schema documents whichever name wins, so Swagger always shows what actually goes on the
+wire.
+
+These are **compile errors** rather than silent mismatches:
+
+- `#[json_name]` and `#[serde(rename)]` on one field naming it *differently* — serde still reads the
+  model if it travels inside a `RawDataTyped<T>`, so two names would mean two wire formats.
+- `#[serde(rename_all(serialize = …, deserialize = …))]` and `#[serde(rename(serialize = …,
+  deserialize = …))]` — they give the two directions different names, and there is only one key.
+
+> **serde attributes that change the object's *shape* are not honoured** — `skip` /
+> `skip_serializing` / `skip_deserializing` / `skip_serializing_if`, `flatten`, `transparent`,
+> `with` / `serialize_with` / `deserialize_with`. This path does not call serde, so they have no
+> effect on it. If you need the full serde semantics, carry the payload as
+> `#[http_body_raw] RawDataTyped<T>`, which is serde on both sides.
+
+A nested object can only be read out of a **JSON body**: the reader borrows the request bytes, and
+every other source would have to hand it a percent-decoded temporary. A struct-typed
+`#[http_query]` / `#[http_header]` / `#[http_form_data]` field is an enum or an `#[http_input_field]`
+type — both carry their own conversion and are unaffected.
 
 ### Building a request (`my_http_utils::schema::client`)
 
@@ -102,12 +201,18 @@ so `my-http-server` no longer needs its own parsing derive. It stays transport-f
 The module is split so the **types live at the root of `http_input`** and the **parse engine lives
 in `http_input::core`**:
 
-- **`http_input`** (root) — the types a model or a custom field touches: `HttpInputValue`,
-  `HttpParseError`, the body/file field types `RawData` / `RawDataTyped<T>` / `FileContent`, and the
-  ready-made custom field `PasswordHttpInputField`.
+- **`http_input`** (root) — the types a model or a custom field touches: `HttpParseError`, the
+  body/file field types `RawData` / `RawDataTyped<T>` / `FileContent`, the ready-made custom field
+  `PasswordHttpInputField`, and (behind `server`) the value type `HttpInputValue`.
 - **`http_input::core`** — the engine: the `THttpRequest` trait, the query / body readers, the
   `&str → T` converters, the source tags (`core::data_src::SRC_*`), and the `HttpInputValue → field`
   conversions.
+
+**The gate follows that split, not the module.** The field types are compiled unconditionally —
+a `#[http_body_raw] body: RawDataTyped<T>` model must compile in an `*-api-shared` crate that the
+wasm client builds **without** `server`, which is the whole point of the shared-model pattern. Only
+the engine (`HttpInputValue` and `http_input::core`, minus the `data_src` tags) is behind `server`,
+so a client still carries none of the parsing code.
 
 `MyHttpInput` then additionally generates, for `Model`:
 
@@ -292,6 +397,13 @@ let filter: AuditFilter = model.body.deserialize_json()?; // <- deserialize in t
 
 To *build* the same model as a client request, add `Serialize` to the payload and use `into()`
 (`RawDataTyped<T>: From<T>` serialises it into the body): `QueryAudit { body: filter.into() }`.
+
+This is the **shared-model** shape: the model above compiles as-is in an `*-api-shared` crate that
+the server builds with `server` and the wasm client builds without it — `RawDataTyped<T>` and the
+other `http_input` field types are not feature-gated (only the parse engine is), and
+`deserialize_json` is available in both. It is also the one body shape that is **serde on both
+sides** — the client serialises `T` with serde and the server deserialises it with serde — so unlike
+a nested `#[http_body]` object it honours every serde attribute.
 
 ## wasm
 

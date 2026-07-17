@@ -23,14 +23,28 @@ pub mod body;
 pub mod form_data_reader;
 pub mod schema;
 
+// The runtime half of the derive-generated `JsonValueReader`. At the crate root because the
+// generated code names it as `my_http_utils::read_json_object_field`, exactly as it names
+// `my_http_utils::my_json::…` for the writer.
+mod json_object_reader;
+pub use json_object_reader::read_json_object_field;
+
 /// Re-exported so the derive-generated client body builder can reach `JsonObjectWriter` via a
 /// fully-qualified `my_http_utils::my_json::…` path (consumers don't depend on `my-json` directly).
 pub use my_json;
 
-/// Server-independent HTTP request parsing (value type, conversions, error, body readers and the
-/// `THttpRequest` abstraction) plus the runtime the derive-generated `parse` targets. Gated
-/// behind the `server` feature so wasm clients that only build requests don't compile it.
-#[cfg(feature = "server")]
+/// Re-exported for the same reason as [`my_json`]: the `MyHttpStringEnum` / `MyHttpIntegerEnum`
+/// derives emit `Serialize`/`Deserialize` impls, and they reach the traits through
+/// `my_http_utils::serde::…` so a model crate needs no direct `serde` dependency of its own.
+pub use serde;
+
+// Server-independent HTTP request parsing: the field types a model names, plus (behind the
+// `server` feature) the parse engine the derive-generated `parse` targets. Always compiled — a
+// model shared between a client and a server names those field types, so it must also compile for
+// a wasm client that does not enable `server`; only the engine is gated. See the module's own docs
+// in `src/http_input/mod.rs` — deliberately NOT an outer `///` block here, because rustdoc merges
+// an outer block on the declaration with the module's inner `//!` one and then resolves the merged
+// text in the crate-root scope, where the module's own items are not nameable.
 pub mod http_input;
 
 /// Derive & attribute macros for HTTP request models (`MyHttpInput`, `MyHttpObjectStructure`,

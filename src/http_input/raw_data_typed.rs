@@ -54,7 +54,7 @@ impl<T: DeserializeOwned> From<RawDataTyped<T>> for Vec<u8> {
 /// it into the JSON bytes the request will carry. Serialisation of a well-formed model never fails,
 /// so a failure is a programmer error (a broken `Serialize`) — we panic rather than thread an error
 /// no caller can sensibly handle. The *server* direction (whole body `Vec<u8>` → this type) is the
-/// crate-local [`crate::http_input::core::FromRawBody`], so this `From<T>` does not clash with it.
+/// crate-local `server`-gated `core::FromRawBody`, so this `From<T>` does not clash with it.
 impl<T: serde::Serialize + DeserializeOwned> From<T> for RawDataTyped<T> {
     fn from(value: T) -> Self {
         let data = serde_json::to_vec(&value)

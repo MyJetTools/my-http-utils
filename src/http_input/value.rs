@@ -151,6 +151,30 @@ impl<'s> HttpInputValue<'s> {
         }
     }
 
+    /// Reads a **nested object** into `T` through `my-json`'s [`JsonValueReader`] — the read half
+    /// of the very contract the client's `JsonValueWriter` writes. An object structure's generated
+    /// `TryFrom<HttpInputValue>` calls this, so both halves come from the same field metadata and
+    /// serde is not involved (which is what used to make `rename_all`, a nested `DateTime` and a
+    /// nested enum disagree between the two sides).
+    ///
+    /// Only a JSON body can carry a nested object: `JsonValueReader<'s>` borrows the request bytes
+    /// for `'s`, and every other source would have to hand it a percent-decoded / unescaped
+    /// temporary. Those sources therefore report a parse error rather than silently taking a
+    /// different route — a struct-typed query/header/form field is an enum or an
+    /// `#[http_input_field]` type, both of which carry their own `TryFrom` and never reach here.
+    pub fn read_json_object<T: my_json::json_reader::JsonValueReader<'s>>(
+        &self,
+    ) -> Result<T, HttpParseError> {
+        match self {
+            Self::Json { value, .. } => value.read_json_value(),
+            other => Err(HttpParseError::NotSupportedContentType(format!(
+                "Field '{}' is a nested object, which can only be read out of a JSON body — got {}",
+                other.get_name(),
+                other.get_src()
+            ))),
+        }
+    }
+
     /// Raw bytes backing this value — used by the `RawData` / `RawDataTyped` conversions.
     pub(super) fn as_raw_bytes(&self) -> Result<Vec<u8>, HttpParseError> {
         match self {

@@ -193,11 +193,16 @@ fn one_value(
 }
 
 /// A `&str` value expression for the inline (no-directive) push.
+///
+/// `to_rfc3339_utc()` (not `to_rfc3339()`) for a date: these sinks are plain `&str` (a path
+/// segment, a query param, a header), so they cannot go through `my-json`'s `JsonValueWriter` the
+/// way a body field does — the spelling has to be named explicitly, and it must be the same one
+/// (`…Z`, fixed-width microseconds) that `my-json` and `rust-extensions`' serde emit.
 fn value_ref_expr(expr: TokenStream, ty: &PropertyType) -> TokenStream {
     match ty {
         PropertyType::String => quote!(#expr.as_str()),
         PropertyType::Struct(..) => quote!(#expr.as_str()),
-        PropertyType::DateTime => quote!(&#expr.to_rfc3339()),
+        PropertyType::DateTime => quote!(&#expr.to_rfc3339_utc()),
         _ => quote!(&#expr.to_string()),
     }
 }
@@ -207,7 +212,7 @@ fn value_base_expr(expr: TokenStream, ty: &PropertyType) -> TokenStream {
     match ty {
         PropertyType::String => quote!(#expr.as_str()),
         PropertyType::Struct(..) => quote!(#expr.as_str()),
-        PropertyType::DateTime => quote!(#expr.to_rfc3339()),
+        PropertyType::DateTime => quote!(#expr.to_rfc3339_utc()),
         _ => quote!(#expr.to_string()),
     }
 }

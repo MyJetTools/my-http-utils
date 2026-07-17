@@ -74,7 +74,9 @@ impl HttpParseError {
 }
 
 /// Adapter around a `Result<T, ReadingEncodedDataError>` (as returned by `UrlEncodedValue`),
-/// carrying the `name`/`src` context needed for a good error message.
+/// carrying the `name`/`src` context needed for a good error message. Read only by the
+/// `server`-gated `HttpInputValue`, so it is gated with it.
+#[cfg(feature = "server")]
 pub(crate) fn convert_reading_error<T>(
     name: &str,
     result: Result<T, ReadingEncodedDataError>,

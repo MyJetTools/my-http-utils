@@ -8,6 +8,7 @@ use quote::quote;
 use types_reader::{PropertyType, StructProperty};
 
 use crate::http_object_structure::struct_prop_ext::StructPropertyExt;
+use crate::field_key::RenameAllRule;
 
 /// Emits the `__obj.write_*(key, …)` expression appending one field into `__obj` (a
 /// `JsonObjectWriter`) and returning the updated writer. `place` is the field access expression
@@ -16,26 +17,20 @@ use crate::http_object_structure::struct_prop_ext::StructPropertyExt;
 ///
 /// * `Option` → `write_if_some_ref` (a `None` omits the key);
 /// * `Vec` → an array (`Vec<T>` is itself a `JsonValueWriter`);
-/// * `DateTimeAsMicroseconds` (not a `JsonValueWriter`) → an RFC-3339 string;
-/// * everything else (scalars, `String`, and any `Struct` that implements `JsonValueWriter` —
-///   object structures, enums, custom fields) → `write_ref`.
+/// * everything else (scalars, `String`, `DateTimeAsMicroseconds`, and any `Struct` that
+///   implements `JsonValueWriter` — object structures, enums, custom fields) → `write_ref`.
+///
+/// `DateTimeAsMicroseconds` deliberately has **no** special case here. `my-json` implements
+/// `JsonValueWriter` for it (it depends on `rust-extensions`), so it goes the common path and the
+/// date's spelling is decided in exactly one place. Formatting it here instead used to call
+/// `to_rfc3339()` directly, which silently bypassed that impl and emitted `…+00:00` while
+/// `rust-extensions`' own serde emitted `…Z` — two spellings of one type on the wire.
 pub fn json_object_field_write(key: &str, place: &TokenStream, ty: &PropertyType) -> TokenStream {
     match ty {
-        PropertyType::OptionOf(inner) if is_date_time(inner.as_ref()) => {
-            quote!(__obj.write_if_some(#key, #place.map(|__v| __v.to_rfc3339())))
-        }
         PropertyType::OptionOf(_) => quote!(__obj.write_if_some_ref(#key, &#place)),
-        PropertyType::VecOf(inner) if is_date_time(inner.as_ref()) => {
-            quote!(__obj.write_iter(#key, #place.iter().map(|__v| __v.to_rfc3339())))
-        }
         PropertyType::VecOf(_) => quote!(__obj.write_ref(#key, &#place)),
-        PropertyType::DateTime => quote!(__obj.write(#key, #place.to_rfc3339())),
         _ => quote!(__obj.write_ref(#key, &#place)),
     }
-}
-
-fn is_date_time(ty: &PropertyType) -> bool {
-    matches!(ty, PropertyType::DateTime)
 }
 
 /// Emits `impl JsonValueWriter for #struct_name`, serialising the struct as a JSON object whose
@@ -45,10 +40,15 @@ fn is_date_time(ty: &PropertyType) -> bool {
 /// Generic object structures keep the previous serde path on the client — an accurate
 /// `impl<T: JsonValueWriter> …` bound is not reconstructable from the schema's `GenericData`, so we
 /// emit nothing rather than an unsound impl.
+///
+/// `rename_all` is the container's `#[serde(rename_all = "..")]`. The keys written here have to be
+/// the ones serde would look for: the server reads an object structure back out of the body with
+/// serde, so a key this writer invents on its own would simply not be found.
 pub fn generate_object_json_value_writer(
     struct_name: &syn::Ident,
     is_generic: bool,
     fields: &[StructProperty],
+    rename_all: Option<RenameAllRule>,
 ) -> Result<TokenStream, syn::Error> {
     if is_generic {
         return Ok(quote!());
@@ -56,10 +56,10 @@ pub fn generate_object_json_value_writer(
 
     let mut writes = Vec::with_capacity(fields.len());
     for field in fields {
-        let key = field.get_name()?;
+        let key = field.get_name(rename_all)?;
         let ident = field.get_field_name_ident();
         let place = quote!(self.#ident);
-        writes.push(json_object_field_write(key, &place, &field.ty));
+        writes.push(json_object_field_write(key.as_str(), &place, &field.ty));
     }
 
     Ok(quote! {

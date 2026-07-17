@@ -515,3 +515,655 @@ fn raw_data_typed_body_schema_is_the_inner_models_object() {
     );
 }
 
+
+// ---- nested object bodies (the read half of `MyHttpInputObjectStructure`) ----------------------
+//
+// A `#[http_body]` field typed as a nested object is written into the request by the client's
+// `JsonValueWriter` and read back out of it by serde. These tests pin BOTH halves, and — in
+// `nested_object_body_client_server_round_trip` — that the two agree on the wire, which is the
+// property that silently broke when `#[serde(rename_all)]` was ignored.
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize, MyHttpInputObjectStructure)]
+struct PciDssBankCardsModel {
+    card_number: String,
+    exp_month: String,
+}
+
+#[derive(MyHttpInput)]
+struct PayInput {
+    #[http_body(name = "challengeId", description = "Challenge id")]
+    challenge_id: String,
+    #[http_body(name = "pciDssBankCards", description = "Card payment instrument")]
+    pci_dss_bank_cards: Option<PciDssBankCardsModel>,
+}
+
+#[test]
+fn server_parses_nested_object_body() {
+    let request = FakeRequest::default().body(
+        "application/json",
+        r#"{"challengeId":"c1","pciDssBankCards":{"card_number":"4111111111111111","exp_month":"12"}}"#,
+    );
+
+    let model = PayInput::parse(&request).unwrap();
+
+    assert_eq!(model.challenge_id, "c1");
+    assert_eq!(
+        model.pci_dss_bank_cards,
+        Some(PciDssBankCardsModel {
+            card_number: "4111111111111111".to_string(),
+            exp_month: "12".to_string(),
+        })
+    );
+}
+
+#[test]
+fn absent_nested_object_body_is_none() {
+    let request = FakeRequest::default().body("application/json", r#"{"challengeId":"c1"}"#);
+
+    let model = PayInput::parse(&request).unwrap();
+
+    assert_eq!(model.challenge_id, "c1");
+    assert!(model.pci_dss_bank_cards.is_none());
+}
+
+#[test]
+fn required_nested_object_body_parses() {
+    #[derive(MyHttpInput)]
+    struct RequiredNested {
+        #[http_body(name = "card", description = "Card")]
+        card: PciDssBankCardsModel,
+    }
+
+    let request = FakeRequest::default().body(
+        "application/json",
+        r#"{"card":{"card_number":"4111","exp_month":"01"}}"#,
+    );
+
+    let model = RequiredNested::parse(&request).unwrap();
+    assert_eq!(model.card.card_number, "4111");
+    assert_eq!(model.card.exp_month, "01");
+}
+
+#[test]
+fn malformed_nested_object_body_reports_the_member_name() {
+    // A nested member that is not the right shape must fail as a parse error naming the member,
+    // not panic and not silently default.
+    let request = FakeRequest::default().body(
+        "application/json",
+        r#"{"challengeId":"c1","pciDssBankCards":{"card_number":"4111"}}"#,
+    );
+
+    match PayInput::parse(&request).err() {
+        Some(HttpParseError::CanNotParseValue { name, src, .. }) => {
+            assert_eq!(name, "pciDssBankCards");
+            assert_eq!(src, "BodyJson");
+        }
+        other => panic!("expected CanNotParseValue for pciDssBankCards, got {:?}", other),
+    }
+}
+
+// ---- client -> server round trip ---------------------------------------------------------------
+
+struct NoRnd;
+impl my_http_utils::schema::client::RandomStringGenerator for NoRnd {
+    fn generate_random_string(_len: usize) -> String {
+        "TESTBOUNDARY0001".to_string()
+    }
+}
+
+/// Builds `model` exactly as the client would, and hands the bytes back as an incoming request —
+/// so a key the writer invents but the reader never looks for shows up as a failing test.
+fn round_trip(model: impl my_http_utils::schema::client::THttpRequestBuilder) -> FakeRequest {
+    match model.get_body::<NoRnd>().unwrap() {
+        my_http_utils::body::HttpRequestBody::Json(data) => {
+            FakeRequest::default().body("application/json", data)
+        }
+        _ => panic!("expected a JSON body"),
+    }
+}
+
+#[test]
+fn nested_object_body_client_server_round_trip() {
+    let sent = PayInput {
+        challenge_id: "c1".to_string(),
+        pci_dss_bank_cards: Some(PciDssBankCardsModel {
+            card_number: "4111111111111111".to_string(),
+            exp_month: "12".to_string(),
+        }),
+    };
+
+    let parsed = PayInput::parse(&round_trip(sent)).unwrap();
+
+    assert_eq!(parsed.challenge_id, "c1");
+    assert_eq!(
+        parsed.pci_dss_bank_cards,
+        Some(PciDssBankCardsModel {
+            card_number: "4111111111111111".to_string(),
+            exp_month: "12".to_string(),
+        })
+    );
+}
+
+#[test]
+fn absent_nested_object_round_trips_as_none() {
+    let sent = PayInput {
+        challenge_id: "c1".to_string(),
+        pci_dss_bank_cards: None,
+    };
+
+    let parsed = PayInput::parse(&round_trip(sent)).unwrap();
+
+    assert_eq!(parsed.challenge_id, "c1");
+    assert!(parsed.pci_dss_bank_cards.is_none());
+}
+
+// ---- #[serde(rename_all)] ----------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize, MyHttpInputObjectStructure)]
+#[serde(rename_all = "camelCase")]
+struct RenamedCard {
+    card_number: String,
+    exp_month: String,
+}
+
+#[derive(MyHttpInput)]
+struct RenamedPayInput {
+    #[http_body(name = "card", description = "Card")]
+    card: RenamedCard,
+}
+
+#[test]
+fn rename_all_round_trips_through_the_real_parse() {
+    // The regression test for the wire break: with rename_all ignored the client wrote
+    // {"card_number":..} while serde demanded {"cardNumber":..}, and this failed with
+    // `missing field \`card_number\``.
+    let sent = RenamedPayInput {
+        card: RenamedCard {
+            card_number: "4111".to_string(),
+            exp_month: "12".to_string(),
+        },
+    };
+
+    let parsed = RenamedPayInput::parse(&round_trip(sent)).unwrap();
+
+    assert_eq!(parsed.card.card_number, "4111");
+    assert_eq!(parsed.card.exp_month, "12");
+}
+
+#[test]
+fn rename_all_client_body_uses_the_serde_key_names() {
+    let model = RenamedPayInput {
+        card: RenamedCard {
+            card_number: "4111".to_string(),
+            exp_month: "12".to_string(),
+        },
+    };
+
+    use my_http_utils::schema::client::THttpRequestBuilder;
+
+    let my_http_utils::body::HttpRequestBody::Json(body) = model.get_body::<NoRnd>().unwrap()
+    else {
+        panic!("expected a JSON body")
+    };
+
+    assert_eq!(
+        String::from_utf8(body).unwrap(),
+        r#"{"card":{"cardNumber":"4111","expMonth":"12"}}"#
+    );
+}
+
+#[test]
+fn rename_all_schema_uses_the_serde_key_names() {
+    // Swagger must document the name that actually goes on the wire.
+    let fields = <RenamedCard as my_http_utils::schema::data_types::DataTypeProvider>::get_data_type();
+    let my_http_utils::schema::data_types::HttpDataType::Object(obj) = fields else {
+        panic!("expected an object structure")
+    };
+    let names: Vec<&str> = obj.main.fields.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, vec!["cardNumber", "expMonth"]);
+}
+
+/// The generated keys must equal serde's own, byte for byte, for every `rename_all` rule — this is
+/// the whole client/server contract for a nested object. Serde is the reference implementation
+/// here, so it is asserted against directly rather than against hand-written expectations.
+///
+/// Two rules are counter-intuitive and are the reason this test compares rather than assumes:
+/// for *fields* (unlike enum variants) serde treats `lowercase` and `snake_case` as no-ops.
+#[test]
+fn rename_all_matches_serde() {
+    use my_http_utils::my_json::json_writer::JsonValueWriter;
+
+    macro_rules! assert_matches_serde {
+        ($name:ident, $rule:literal, { $($field:ident),+ $(,)? }) => {{
+            #[derive(serde::Serialize, serde::Deserialize, MyHttpInputObjectStructure)]
+            #[serde(rename_all = $rule)]
+            #[allow(non_snake_case)]
+            struct $name { $($field: u32),+ }
+
+            let value = $name { $($field: 1),+ };
+
+            let mut client = String::new();
+            value.write(&mut client);
+
+            assert_eq!(
+                client,
+                serde_json::to_string(&value).unwrap(),
+                "rename_all = {} : the client writer disagrees with serde",
+                $rule,
+            );
+        }};
+    }
+
+    assert_matches_serde!(Lower, "lowercase", { card_number, alreadyCamel, HTTPStatus });
+    assert_matches_serde!(Upper, "UPPERCASE", { card_number, exp_month });
+    assert_matches_serde!(Pascal, "PascalCase", { card_number, user_id_2, field2name });
+    assert_matches_serde!(Camel, "camelCase", { card_number, exp_month, a, id });
+    assert_matches_serde!(Snake, "snake_case", { alreadyCamel, HTTPStatus });
+    assert_matches_serde!(Screaming, "SCREAMING_SNAKE_CASE", { card_number, user_id_2 });
+    assert_matches_serde!(Kebab, "kebab-case", { card_number, double__underscore });
+    assert_matches_serde!(ScreamingKebab, "SCREAMING-KEBAB-CASE", { card_number, exp_month });
+}
+
+/// A field-level `#[serde(rename)]` overrides the container rule and is NOT itself re-cased, and a
+/// raw identifier is keyed without its `r#` — both exactly as serde does them.
+#[test]
+fn field_rename_and_raw_ident_match_serde() {
+    use my_http_utils::my_json::json_writer::JsonValueWriter;
+
+    #[derive(serde::Serialize, serde::Deserialize, MyHttpInputObjectStructure)]
+    #[serde(rename_all = "camelCase")]
+    struct Precedence {
+        card_number: u32,
+        #[serde(rename = "EXPLICIT_wins")]
+        exp_month: u32,
+        security_code: u32,
+    }
+
+    let value = Precedence { card_number: 1, exp_month: 2, security_code: 3 };
+    let mut client = String::new();
+    value.write(&mut client);
+    assert_eq!(client, serde_json::to_string(&value).unwrap());
+    assert_eq!(client, r#"{"cardNumber":1,"EXPLICIT_wins":2,"securityCode":3}"#);
+
+    #[derive(serde::Serialize, serde::Deserialize, MyHttpInputObjectStructure)]
+    struct RawIdent {
+        r#type: u32,
+    }
+
+    let value = RawIdent { r#type: 1 };
+    let mut client = String::new();
+    value.write(&mut client);
+    assert_eq!(client, serde_json::to_string(&value).unwrap());
+    assert_eq!(client, r#"{"type":1}"#);
+}
+
+/// serde params the derive does not care about must be walked over, not choke it — in particular
+/// the **list form** (`bound(..)`, or a container `rename(..)` naming the struct rather than its
+/// fields), which is not a `name = value` and once made the attribute parser give up with a
+/// spurious `expected ','`.
+#[test]
+fn unrelated_serde_params_are_tolerated() {
+    use my_http_utils::my_json::json_writer::JsonValueWriter;
+
+    /// A doc comment on the container.
+    #[derive(serde::Serialize, serde::Deserialize, MyHttpInputObjectStructure)]
+    #[serde(bound(deserialize = "u32: serde::Deserialize<'de>"), rename_all = "camelCase")]
+    #[serde(expecting = "an object")]
+    #[serde(deny_unknown_fields)]
+    struct ListForm {
+        card_number: u32,
+        #[serde(default, rename = "kept")]
+        b: u32,
+    }
+
+    let value = ListForm { card_number: 1, b: 2 };
+    let mut client = String::new();
+    value.write(&mut client);
+
+    // `bound(..)` walked over, `rename_all` still applied, field `rename` still wins.
+    assert_eq!(client, serde_json::to_string(&value).unwrap());
+    assert_eq!(client, r#"{"cardNumber":1,"kept":2}"#);
+
+    // A container-level `rename(serialize = .., deserialize = ..)` renames the STRUCT, not its
+    // fields, so it must be ignored here rather than rejected.
+    #[derive(serde::Serialize, serde::Deserialize, MyHttpObjectStructure)]
+    #[serde(rename(serialize = "Aa", deserialize = "Bb"), rename_all = "camelCase")]
+    struct ContainerRename {
+        card_number: u32,
+    }
+
+    let value = ContainerRename { card_number: 1 };
+    let mut client = String::new();
+    value.write(&mut client);
+    assert_eq!(client, serde_json::to_string(&value).unwrap());
+    assert_eq!(client, r#"{"cardNumber":1}"#);
+}
+
+/// A date has exactly ONE spelling on the wire, and it is the sortable one.
+///
+/// `DateTimeAsMicroseconds` is written into a body by `my-json`'s `JsonValueWriter` and read back
+/// by serde, so the two must agree byte for byte — they did not while this crate's codegen
+/// special-cased the type and called `to_rfc3339()` itself, emitting `…+00:00` against serde's
+/// `…Z`. Asserting against `serde_json` rather than a literal keeps the two pinned together.
+#[test]
+fn date_time_wire_format_matches_serde() {
+    use my_http_utils::my_json::json_writer::JsonValueWriter;
+    use rust_extensions::date_time::DateTimeAsMicroseconds;
+
+    #[derive(serde::Serialize, serde::Deserialize, MyHttpInputObjectStructure)]
+    struct WithDate {
+        dt: DateTimeAsMicroseconds,
+        od: Option<DateTimeAsMicroseconds>,
+        v: Vec<DateTimeAsMicroseconds>,
+    }
+
+    // Microseconds present: a floating-precision format would drop them.
+    let dt = DateTimeAsMicroseconds::from_str("2024-01-02T03:04:05.123456").unwrap();
+    let value = WithDate { dt, od: Some(dt), v: vec![dt] };
+
+    let mut client = String::new();
+    value.write(&mut client);
+
+    assert_eq!(client, serde_json::to_string(&value).unwrap());
+    assert!(
+        client.contains("2024-01-02T03:04:05.123456Z"),
+        "expected the fixed-width `Z` spelling, got {}",
+        client
+    );
+}
+
+/// Fixed-width microseconds + `Z` is what makes lexicographic order match chronological order —
+/// the reason this spelling was chosen over `to_rfc3339()`'s floating precision.
+#[test]
+fn date_time_wire_format_is_sortable_as_text() {
+    use rust_extensions::date_time::DateTimeAsMicroseconds;
+
+    let mut moments: Vec<DateTimeAsMicroseconds> = [
+        "2024-01-02T03:04:05.9",
+        "2024-01-02T03:04:05",
+        "2024-01-02T03:04:05.123456",
+        "2023-12-31T23:59:59.000001",
+    ]
+    .iter()
+    .map(|src| DateTimeAsMicroseconds::from_str(src).unwrap())
+    .collect();
+
+    moments.sort_by_key(|m| m.unix_microseconds);
+    let chronological: Vec<String> = moments.iter().map(|m| m.to_rfc3339_utc()).collect();
+
+    let mut lexicographic = chronological.clone();
+    lexicographic.sort();
+
+    assert_eq!(chronological, lexicographic);
+}
+
+/// A date in a query string / header does not go through `my-json` (those sinks take a `&str`), so
+/// the spelling is named explicitly in the client writer — pin it to the same one, and pin that the
+/// server reads it back exactly.
+#[test]
+fn date_time_in_query_round_trips() {
+    use my_http_utils::schema::client::THttpRequestBuilder;
+    use rust_extensions::date_time::DateTimeAsMicroseconds;
+
+    #[derive(MyHttpInput)]
+    struct QueryWithDate {
+        #[http_query(name = "from", description = "From")]
+        from: DateTimeAsMicroseconds,
+    }
+
+    let from = DateTimeAsMicroseconds::from_str("2024-01-02T03:04:05.123456").unwrap();
+
+    let mut url = my_http_utils::UrlBuilder::new("https://api.example.com");
+    QueryWithDate { from }.fill_url(&mut url).unwrap();
+    let url = url.to_string();
+
+    // Percent-encoded on the way out (`:` -> %3A), so assert on what the server decodes.
+    let query = url.split('?').nth(1).unwrap();
+    let parsed = QueryWithDate::parse(&FakeRequest::default().query(query)).unwrap();
+
+    assert_eq!(parsed.from.unix_microseconds, from.unix_microseconds);
+
+    // Pin the *spelling*, not just the round trip: both spellings parse back exactly, so a
+    // value-only assertion here would pass against `to_rfc3339()` too and would not hold this
+    // sink to the same format the body and serde use.
+    assert_eq!(
+        my_http_utils::url_encoded_data_reader::UrlEncodedDataReader::new(query)
+            .unwrap()
+            .get_required("from")
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        from.to_rfc3339_utc(),
+    );
+}
+
+// ---- enums nested in an object structure -------------------------------------------------------
+//
+// An enum nested in a `#[http_body]` object is written by `JsonValueWriter` (the `http_enum_case`
+// value) but read back by serde. They only agree because the derive owns serde too — a user's
+// `#[derive(Deserialize)]` would key off the Rust variant name and fail with
+// `unknown variant \`bright-red\`, expected \`BrightRed\``.
+
+// No `#[derive(Serialize, Deserialize)]` on these: the enum derive emits them.
+#[derive(Debug, Clone, Copy, PartialEq, MyHttpStringEnum)]
+enum NestedColor {
+    #[http_enum_case(id = "0", value = "bright-red", description = "Red", default)]
+    BrightRed,
+    #[http_enum_case(id = "1", value = "deep-blue", description = "Blue")]
+    DeepBlue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, MyHttpIntegerEnum)]
+enum NestedLevel {
+    #[http_enum_case(id = "5", value = "five", description = "Five", default)]
+    Five,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, MyHttpInputObjectStructure)]
+struct WithEnums {
+    c: NestedColor,
+    l: NestedLevel,
+    oc: Option<NestedColor>,
+    v: Vec<NestedColor>,
+}
+
+#[derive(MyHttpInput)]
+struct EnumBody {
+    #[http_body(name = "n", description = "Nested")]
+    n: WithEnums,
+}
+
+#[test]
+fn nested_enum_wire_format_matches_serde() {
+    use my_http_utils::my_json::json_writer::JsonValueWriter;
+
+    let value = WithEnums {
+        c: NestedColor::BrightRed,
+        l: NestedLevel::Five,
+        oc: Some(NestedColor::DeepBlue),
+        v: vec![NestedColor::DeepBlue],
+    };
+
+    let mut client = String::new();
+    value.write(&mut client);
+
+    assert_eq!(client, serde_json::to_string(&value).unwrap());
+    // The `http_enum_case` value, not the Rust variant name — this is what the schema documents.
+    assert_eq!(
+        client,
+        r#"{"c":"bright-red","l":"five","oc":"deep-blue","v":["deep-blue"]}"#
+    );
+}
+
+#[test]
+fn nested_enum_round_trips_through_the_real_parse() {
+    let sent = EnumBody {
+        n: WithEnums {
+            c: NestedColor::BrightRed,
+            l: NestedLevel::Five,
+            oc: Some(NestedColor::DeepBlue),
+            v: vec![NestedColor::DeepBlue, NestedColor::BrightRed],
+        },
+    };
+
+    let parsed = EnumBody::parse(&round_trip(sent)).unwrap();
+
+    assert_eq!(parsed.n.c, NestedColor::BrightRed);
+    assert_eq!(parsed.n.l, NestedLevel::Five);
+    assert_eq!(parsed.n.oc, Some(NestedColor::DeepBlue));
+    assert_eq!(
+        parsed.n.v,
+        vec![NestedColor::DeepBlue, NestedColor::BrightRed]
+    );
+}
+
+#[test]
+fn nested_enum_deserialize_takes_value_or_id() {
+    // `TryFrom<HttpInputValue>` accepts the case value or its id; serde must not invent a second,
+    // narrower behaviour. The id is accepted both as text and as a JSON number.
+    for body in [
+        r#"{"c":"bright-red","l":"five","oc":null,"v":[]}"#,
+        r#"{"c":"0","l":"5","oc":null,"v":[]}"#,
+        r#"{"c":0,"l":5,"oc":null,"v":[]}"#,
+    ] {
+        let parsed: WithEnums = serde_json::from_str(body).unwrap_or_else(|e| panic!("{}: {}", body, e));
+        assert_eq!(parsed.c, NestedColor::BrightRed);
+        assert_eq!(parsed.l, NestedLevel::Five);
+    }
+}
+
+#[test]
+fn nested_enum_rejects_an_unknown_case() {
+    let err = serde_json::from_str::<WithEnums>(r#"{"c":"nope","l":"five","oc":null,"v":[]}"#)
+        .expect_err("an unknown case must not silently become the default");
+
+    let err = err.to_string();
+    assert!(err.contains("nope") && err.contains("bright-red"), "unhelpful error: {}", err);
+}
+
+// ---- #[json_name] and the serde-free path ------------------------------------------------------
+
+/// `#[json_name]` is this crate's own way to name a field on the wire. A `#[http_body]` object is
+/// written and read entirely by the derive (my-json on both sides), so a model needs no serde at
+/// all — and should not have to derive it merely to register `#[serde(rename)]`.
+#[test]
+fn json_name_sets_the_key_on_both_halves() {
+    use my_http_utils::my_json::json_writer::JsonValueWriter;
+
+    // Deliberately no `Serialize` / `Deserialize`: the point is that neither is needed.
+    #[derive(Debug, MyHttpInputObjectStructure)]
+    struct JsonNamed {
+        #[json_name("cardNumber")]
+        card_number: String,
+        untouched: u32,
+    }
+
+    #[derive(MyHttpInput)]
+    struct Body {
+        #[http_body(name = "card", description = "Card")]
+        card: JsonNamed,
+    }
+
+    let mut written = String::new();
+    JsonNamed { card_number: "4111".to_string(), untouched: 7 }.write(&mut written);
+    assert_eq!(written, r#"{"cardNumber":"4111","untouched":7}"#);
+
+    // The reader resolves the key through the same `json_name`, so the round trip closes.
+    let parsed = Body::parse(&round_trip(Body {
+        card: JsonNamed { card_number: "4111".to_string(), untouched: 7 },
+    }))
+    .unwrap();
+
+    assert_eq!(parsed.card.card_number, "4111");
+    assert_eq!(parsed.card.untouched, 7);
+}
+
+/// `#[json_name]` wins over the container's `rename_all`, exactly as an explicit `#[serde(rename)]`
+/// does — an explicit name is explicit, and is not then re-cased.
+#[test]
+fn json_name_overrides_rename_all() {
+    use my_http_utils::my_json::json_writer::JsonValueWriter;
+
+    #[derive(serde::Serialize, serde::Deserialize, MyHttpInputObjectStructure)]
+    #[serde(rename_all = "camelCase")]
+    struct Mixed {
+        #[json_name("EXPLICIT_wins")]
+        exp_month: u32,
+        security_code: u32,
+    }
+
+    let mut written = String::new();
+    Mixed { exp_month: 1, security_code: 2 }.write(&mut written);
+
+    assert_eq!(written, r#"{"EXPLICIT_wins":1,"securityCode":2}"#);
+}
+
+/// A `#[http_body]` object no longer touches serde, so `Deserialize` is not required — this is the
+/// property that makes `MyHttpInputObjectStructure` a drop-in for a client-only model crate.
+#[test]
+fn nested_object_parses_without_any_serde_derive() {
+    #[derive(Debug, MyHttpInputObjectStructure)]
+    struct NoSerde {
+        card_number: String,
+        exp_month: u32,
+    }
+
+    #[derive(MyHttpInput)]
+    struct NoSerdeBody {
+        #[http_body(name = "card", description = "Card")]
+        card: NoSerde,
+        #[http_body(name = "opt", description = "Optional")]
+        opt: Option<NoSerde>,
+    }
+
+    let request = FakeRequest::default().body(
+        "application/json",
+        r#"{"card":{"card_number":"4111","exp_month":12}}"#,
+    );
+
+    let model = NoSerdeBody::parse(&request).unwrap();
+
+    assert_eq!(model.card.card_number, "4111");
+    assert_eq!(model.card.exp_month, 12);
+    assert!(model.opt.is_none());
+}
+
+/// serde params this path cannot honour must be rejected, not ignored: a `#[http_body]` object is
+/// written and read by the derive itself, so `#[serde(skip_serializing)]` would silently *send* a
+/// field its author marked never-to-be-sent. These are covered by compile-fail expectations in
+/// `tests/README` terms; here we pin the *positive* half — that the legal battery still compiles
+/// and still round-trips, so the rejection is not over-broad.
+#[test]
+fn shape_neutral_serde_params_are_still_accepted() {
+    use my_http_utils::my_json::json_writer::JsonValueWriter;
+
+    #[derive(Debug, serde::Serialize, serde::Deserialize, MyHttpInputObjectStructure)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[serde(bound(deserialize = "u32: serde::Deserialize<'de>"))]
+    struct Legal {
+        card_number: u32,
+        #[serde(default)]
+        with_default: u32,
+        #[serde(alias = "second_name")]
+        last_name: String,
+        #[json_name("EXPLICIT")]
+        explicit: u32,
+    }
+
+    let value = Legal {
+        card_number: 1,
+        with_default: 2,
+        last_name: "x".to_string(),
+        explicit: 3,
+    };
+
+    let mut written = String::new();
+    value.write(&mut written);
+
+    // `rename_all` applied, `json_name` wins, `default`/`alias`/`bound`/`deny_unknown_fields`
+    // are shape-neutral and simply pass through.
+    assert_eq!(
+        written,
+        r#"{"cardNumber":1,"withDefault":2,"lastName":"x","EXPLICIT":3}"#
+    );
+}

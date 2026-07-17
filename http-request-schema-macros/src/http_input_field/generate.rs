@@ -115,6 +115,19 @@ pub fn generate(attr: TokenStream, input: TokenStream) -> Result<TokenStream, sy
                 }
             }
 
+            // JSON string -> value: the read half of the writer above. An object structure is read
+            // through `JsonValueReader`, so without this a custom field nested in one would not
+            // compile. Emitted unconditionally, in step with the writer.
+            impl<'s> my_http_utils::my_json::json_reader::JsonValueReader<'s> for #struct_name {
+                fn from_json_value(
+                    __value: &my_http_utils::my_json::json_reader::JsonValueRef<'s>,
+                ) -> Result<Self, my_http_utils::my_json::json_reader::JsonParseError> {
+                    let __s: #tp =
+                        my_http_utils::my_json::json_reader::JsonValueReader::from_json_value(__value)?;
+                    Ok(Self::new(__s))
+                }
+            }
+
             #try_from_input
     };
 

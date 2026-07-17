@@ -1,13 +1,20 @@
 //! Primitive `&str -> T` conversions, all returning [`HttpParseError`]. Ported from
 //! `my-http-server-core::convert_from_str`, with `serde_json` for the JSON paths (wasm-safe).
+//!
+//! All of these are engine-only and gated on `server`, except [`to_json_from_slice`]: it is what
+//! [`crate::http_input::RawDataTyped::deserialize_json`] calls, and that type is nameable (and
+//! usable) by a client that does not enable `server`.
 
+#[cfg(feature = "server")]
 use std::str::FromStr;
 
+#[cfg(feature = "server")]
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use serde::de::DeserializeOwned;
 
 use crate::http_input::HttpParseError;
 
+#[cfg(feature = "server")]
 pub fn to_simple_value<T: FromStr>(
     name: &str,
     value: &str,
@@ -19,6 +26,7 @@ pub fn to_simple_value<T: FromStr>(
     }
 }
 
+#[cfg(feature = "server")]
 pub fn to_bool(name: &str, value: &str, src: &'static str) -> Result<bool, HttpParseError> {
     if value == "1" || value.eq_ignore_ascii_case("true") {
         return Ok(true);
@@ -31,6 +39,7 @@ pub fn to_bool(name: &str, value: &str, src: &'static str) -> Result<bool, HttpP
     Err(HttpParseError::cannot_parse(name, src, value))
 }
 
+#[cfg(feature = "server")]
 pub fn to_date_time(
     name: &str,
     value: &str,

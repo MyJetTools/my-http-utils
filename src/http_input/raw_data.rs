@@ -27,7 +27,7 @@ impl From<RawData> for Vec<u8> {
 }
 
 /// Build `RawData` from the whole body bytes — **infallible**. (The derive's server parse builds a
-/// `#[http_body_raw] RawData` field through [`crate::http_input::core::FromRawBody`], which calls
+/// `#[http_body_raw] RawData` field through the `server`-gated `core::FromRawBody`, which calls
 /// `RawData::new`; this `From` stays for direct `Vec<u8>` → `RawData` conversions.)
 impl From<Vec<u8>> for RawData {
     fn from(data: Vec<u8>) -> Self {

@@ -12,8 +12,10 @@ mod http_input_field;
 mod http_input_object_structure;
 mod http_object_structure;
 mod input_models;
+mod json_value_reader_gen;
 mod json_value_writer_gen;
 mod property_type_ext;
+mod field_key;
 mod types;
 
 #[proc_macro_derive(
@@ -43,7 +45,19 @@ pub fn my_http_input_doc_derive(input: TokenStream) -> TokenStream {
     result
 }
 
-#[proc_macro_derive(MyHttpInputObjectStructure)]
+// `attributes(debug)`: generate() honours a `#[debug]` field attribute, so the derive has to
+// register it as a helper — without this rustc rejects `#[debug]` before the derive is reached.
+//
+// `attributes(serde)`: the key names come from `#[serde(rename_all)]` / `#[serde(rename)]`, and an
+// inert attribute is only accepted if some derive registers it. Since this derive no longer needs
+// serde to be derived at all, nothing else would register it — `#[serde(..)]` on a model that does
+// not derive `Serialize`/`Deserialize` would be rejected as `cannot find attribute \`serde\``.
+// Registering it here is harmless when serde IS derived: helper attributes are inert, and both
+// derives simply read the same tokens.
+//
+// `attributes(json_name)`: this crate's own `#[json_name("cardNumber")]`, which says the same thing
+// without making a serde-free model derive serde just to register the attribute.
+#[proc_macro_derive(MyHttpInputObjectStructure, attributes(debug, serde, json_name))]
 pub fn my_http_input_object_derive(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     let (result, debug) = crate::http_input_object_structure::generate(&ast);
@@ -55,7 +69,7 @@ pub fn my_http_input_object_derive(input: TokenStream) -> TokenStream {
     result
 }
 
-#[proc_macro_derive(MyHttpObjectStructure, attributes(debug))]
+#[proc_macro_derive(MyHttpObjectStructure, attributes(debug, serde, json_name))]
 pub fn my_http_output_object_derive(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     let mut debug = false;
