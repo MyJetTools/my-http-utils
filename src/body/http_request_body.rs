@@ -10,6 +10,11 @@ pub enum HttpRequestBody {
         data: Vec<u8>,
         content_type: Option<&'static str>,
     },
+    /// The body is handed over as a **stream** (`#[http_body_as_stream]`) — it never exists in
+    /// memory whole. The transport takes the reader out with
+    /// [`HttpBodyAsStream::get_body_reader`](crate::http_input::HttpBodyAsStream::get_body_reader)
+    /// and writes the chunks as they arrive.
+    Stream(crate::http_input::HttpBodyAsStream),
     Empty,
 }
 
@@ -41,18 +46,43 @@ impl HttpRequestBody {
                 let content_type = (*content_type)?;
                 Some(content_type.into())
             }
+            // A stream carries no type of its own: the model states it with an `#[http_header]`
+            // field, or the caller adds it on the transport (`with_header`).
+            Self::Stream(_) => None,
             Self::Empty => None,
         }
     }
 
+    /// `true` for [`Self::Stream`] — the one variant that has no bytes to give.
+    ///
+    /// A transport that materialises bodies must check this (or match `Stream` explicitly) before
+    /// calling [`Self::into_vec`]; see the warning there.
+    pub fn is_stream(&self) -> bool {
+        matches!(self, Self::Stream(_))
+    }
+
+    /// Materialises the body into bytes.
+    ///
+    /// **A transport MUST match [`Self::Stream`] before it gets here.** A streamed body has no
+    /// bytes yet — they only exist once the reader is drained — so this returns an **empty**
+    /// `Vec`, and a transport that ignores the variant silently sends an empty body instead of the
+    /// payload. Use [`Self::is_stream`] to guard the call.
     pub fn into_vec(self) -> Vec<u8> {
         match self {
             Self::Json(data) => data,
             Self::UrlEncoded(body) => body.data.into_bytes(),
             Self::FormData(body) => body.into_bytes(),
             Self::Raw { data, .. } => data,
+            // Not materialisable — the bytes live in the channel, not here.
+            Self::Stream(_) => Vec::new(),
             Self::Empty => Vec::new(),
         }
+    }
+}
+
+impl From<crate::http_input::HttpBodyAsStream> for HttpRequestBody {
+    fn from(src: crate::http_input::HttpBodyAsStream) -> Self {
+        HttpRequestBody::Stream(src)
     }
 }
 

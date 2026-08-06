@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use my_http_utils::body::HttpRequestBody;
 use my_http_utils::http_input::core::THttpRequest;
 use my_http_utils::http_input::{HttpBodyAsStream, HttpBodyReader, HttpParseError};
 use my_http_utils::macros::*;
@@ -410,42 +411,213 @@ async fn empty_chunks_never_reach_the_consumer() {
     assert_eq!(reader.get_next_chunk().await.unwrap(), None);
 }
 
-// ---- 10. such a model is not a client request -------------------------------
+// ---- 10. the SAME model, used to SEND a body as a stream --------------------
+//
+// The roles simply invert: here the test plays the application filling the channel, and the
+// `HttpRequestBody::Stream` it gets back is what a transport (fl-url) would drain.
 
-#[test]
-fn a_streaming_model_refuses_to_build_an_outgoing_request() {
-    struct Rnd;
-    impl RandomStringGenerator for Rnd {
-        fn generate_random_string(_len: usize) -> String {
-            "TESTBOUNDARY0001".to_string()
-        }
+struct Rnd;
+impl RandomStringGenerator for Rnd {
+    fn generate_random_string(_len: usize) -> String {
+        "TESTBOUNDARY0001".to_string()
     }
+}
+
+/// Everything a transport does with the body it is handed.
+fn take_stream(body: HttpRequestBody) -> HttpBodyAsStream {
+    assert!(body.is_stream());
+    // A stream carries no content type of its own — the model states it with a header field.
+    assert!(body.get_content_type().is_none());
+    match body {
+        HttpRequestBody::Stream(stream) => stream,
+        _ => panic!("expected HttpRequestBody::Stream"),
+    }
+}
+
+#[tokio::test]
+async fn a_streaming_model_builds_an_outgoing_request_that_streams() {
+    let (sender, stream) = HttpBodyAsStream::create(4, Some(9));
 
     let model = UploadHttpInput {
         file_name: "report.bin".to_string(),
         overwrite: false,
-        // what a client / wasm build has: nothing to stream
-        body: HttpBodyAsStream::empty(),
+        body: stream,
     };
 
-    // url and headers still work — only the body is impossible.
+    // url and headers are built exactly as for any other model
     let mut url = UrlBuilder::new("https://api.example.com");
     model.fill_url(&mut url).unwrap();
     assert_eq!(url.to_string(), "https://api.example.com?overwrite=false");
 
-    let err = model
-        .get_body::<Rnd>()
-        .err()
-        .expect("a stream model has no outgoing body");
+    // the application feeds the body — this is what the transport will pull out
+    tokio::spawn(async move {
+        for chunk in [b"aaa".to_vec(), b"bbb".to_vec(), b"ccc".to_vec()] {
+            assert!(sender.send_chunk(chunk).await);
+        }
+        sender.finish();
+    });
 
-    assert_eq!(err.field, "body");
+    // `get_body` consumes the model, so the stream MOVES out — no clone.
+    let outgoing = take_stream(model.get_body::<Rnd>().unwrap());
+
+    // the Content-Length the caller declared travels with it, both before and after taking a reader
+    assert_eq!(outgoing.get_content_length(), Some(9));
+    let reader = outgoing.get_body_reader().unwrap();
+    assert_eq!(reader.get_content_length(), Some(9));
+
+    assert_eq!(reader.get_next_chunk().await.unwrap(), Some(b"aaa".to_vec()));
+    assert_eq!(reader.get_next_chunk().await.unwrap(), Some(b"bbb".to_vec()));
+    assert_eq!(reader.get_next_chunk().await.unwrap(), Some(b"ccc".to_vec()));
+    assert_eq!(reader.get_next_chunk().await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn an_outgoing_stream_that_breaks_off_is_an_error_for_the_transport_too() {
+    let (sender, stream) = HttpBodyAsStream::create(4, None);
+
+    let model = UploadHttpInput {
+        file_name: "report.bin".to_string(),
+        overwrite: false,
+        body: stream,
+    };
+
+    tokio::spawn(async move {
+        assert!(sender.send_chunk(b"first".to_vec()).await);
+        // the producer died mid-body — dropped WITHOUT finish()
+    });
+
+    let reader = take_stream(model.get_body::<Rnd>().unwrap())
+        .get_body_reader()
+        .unwrap();
+
     assert_eq!(
-        err.reason,
-        "#[http_body_as_stream] model can not be used to build a client request"
+        reader.get_next_chunk().await.unwrap(),
+        Some(b"first".to_vec())
+    );
+
+    match reader.get_next_chunk().await {
+        Err(HttpParseError::BodyStream(msg)) => {
+            assert_eq!(msg, "Request body stream ended unexpectedly");
+        }
+        other => panic!("a truncated upload must not look like a clean end: {:?}", other),
+    }
+}
+
+#[test]
+fn a_model_with_nothing_to_send_yields_a_stream_with_no_reader() {
+    let model = UploadHttpInput {
+        file_name: "report.bin".to_string(),
+        overwrite: false,
+        body: HttpBodyAsStream::empty(),
+    };
+
+    // Still a `Stream` — but the transport learns there is nothing to send from the reader.
+    let outgoing = take_stream(model.get_body::<Rnd>().unwrap());
+    assert_eq!(outgoing.get_content_length(), None);
+
+    match outgoing.get_body_reader() {
+        Err(HttpParseError::BodyStream(msg)) => assert_eq!(msg, "Body stream is not available"),
+        _ => panic!("empty() must never produce a reader"),
+    }
+}
+
+#[test]
+fn other_body_kinds_are_not_streams() {
+    // The guard a transport uses stays false for everything that does have bytes.
+    assert!(!HttpRequestBody::Empty.is_stream());
+    assert!(!HttpRequestBody::Json(b"{}".to_vec()).is_stream());
+    assert!(!PlainBodyHttpInput {
+        name: "John".to_string()
+    }
+    .get_body::<Rnd>()
+    .unwrap()
+    .is_stream());
+}
+
+// ---- 11. poll-based reading, for a transport that is itself a Body ----------
+
+/// Drives `poll_next_chunk` the way `hyper::body::Body::poll_frame` would.
+async fn poll_once(
+    reader: &mut HttpBodyReader,
+) -> Option<Result<Vec<u8>, HttpParseError>> {
+    std::future::poll_fn(|cx| reader.poll_next_chunk(cx)).await
+}
+
+#[tokio::test]
+async fn poll_next_chunk_delivers_the_chunks_then_a_clean_end() {
+    let (sender, stream) = HttpBodyAsStream::create(4, None);
+    let mut reader = stream.get_body_reader().unwrap();
+
+    tokio::spawn(async move {
+        for chunk in [b"aa".to_vec(), b"bb".to_vec()] {
+            assert!(sender.send_chunk(chunk).await);
+        }
+        sender.finish();
+    });
+
+    assert_eq!(poll_once(&mut reader).await.unwrap().unwrap(), b"aa".to_vec());
+    assert_eq!(poll_once(&mut reader).await.unwrap().unwrap(), b"bb".to_vec());
+    assert!(poll_once(&mut reader).await.is_none());
+}
+
+#[tokio::test]
+async fn poll_next_chunk_reports_an_abort_rather_than_an_end() {
+    let (sender, stream) = HttpBodyAsStream::create(4, None);
+    let mut reader = stream.get_body_reader().unwrap();
+
+    tokio::spawn(async move {
+        assert!(sender.send_chunk(b"first".to_vec()).await);
+        // dropped WITHOUT finish()
+    });
+
+    assert_eq!(
+        poll_once(&mut reader).await.unwrap().unwrap(),
+        b"first".to_vec()
+    );
+
+    match poll_once(&mut reader).await {
+        Some(Err(HttpParseError::BodyStream(msg))) => {
+            assert_eq!(msg, "Request body stream ended unexpectedly");
+        }
+        other => panic!("expected an abort, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn poll_next_chunk_surfaces_a_sent_error() {
+    let (sender, stream) = HttpBodyAsStream::create(4, None);
+    let mut reader = stream.get_body_reader().unwrap();
+
+    tokio::spawn(async move {
+        sender
+            .send_error(HttpParseError::BodyStream("disk read failed".to_string()))
+            .await;
+    });
+
+    match poll_once(&mut reader).await {
+        Some(Err(HttpParseError::BodyStream(msg))) => assert_eq!(msg, "disk read failed"),
+        other => panic!("expected the producer's error, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn poll_next_chunk_is_pending_while_nothing_has_arrived() {
+    let (sender, stream) = HttpBodyAsStream::create(4, None);
+    let mut reader = stream.get_body_reader().unwrap();
+
+    // Nothing sent yet: the poll must park, not report an end of body.
+    let waker = std::task::Waker::noop();
+    let mut cx = std::task::Context::from_waker(waker);
+    assert!(reader.poll_next_chunk(&mut cx).is_pending());
+
+    assert!(sender.send_chunk(b"late".to_vec()).await);
+    assert_eq!(
+        poll_once(&mut reader).await.unwrap().unwrap(),
+        b"late".to_vec()
     );
 }
 
-// ---- 11. Send + Sync --------------------------------------------------------
+// ---- 12. Send + Sync --------------------------------------------------------
 //
 // Not optional: the model lives across `.await` inside a handler, and `HandleHttpRequest` in
 // my-http-server-controllers is `#[async_trait]`, so that future MUST be `Send`.

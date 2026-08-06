@@ -314,19 +314,17 @@ fn generate_get_body(props: &HttpInputProperties) -> Result<TokenStream, syn::Er
         });
     }
 
-    // A `#[http_body_as_stream]` model describes an INCOMING body; there is nothing to send. Fail
-    // loudly rather than panic or silently produce an `Empty` body that would look like a working
-    // request. This arm compiles without the `server` feature too (wasm) — it only fails at
-    // runtime, and only if someone actually tries to build an outgoing request from such a model.
+    // A `#[http_body_as_stream]` model works in BOTH directions: the same field the server fills
+    // from hyper is, on the client, filled by the caller and handed to the transport as a stream.
+    // `get_body` consumes `self`, so the stream MOVES out of the model — no clone, and the
+    // single-receiver invariant is preserved. A model with nothing to send carries
+    // `HttpBodyAsStream::empty()`, whose `get_body_reader()` tells the transport so.
     if let Some(field) = &props.body_as_stream_field {
-        let name = field.get_input_field_name()?;
+        let ident = field.property.get_field_name_ident();
         return Ok(quote! {
             #[allow(clippy::extra_unused_type_parameters)]
             fn get_body<__TRnd: my_http_utils::schema::client::RandomStringGenerator>(self) -> Result<my_http_utils::body::HttpRequestBody, my_http_utils::schema::client::HttpRequestBuildError> {
-                Err(my_http_utils::schema::client::HttpRequestBuildError::new(
-                    #name,
-                    "#[http_body_as_stream] model can not be used to build a client request",
-                ))
+                Ok(my_http_utils::body::HttpRequestBody::Stream(self.#ident))
             }
         });
     }

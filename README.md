@@ -6,8 +6,8 @@ low-level URL helpers it is built on.
 Describe an HTTP model **once** with the derive macros: on the client the same model builds an
 outgoing request; on the server ([my-http-server](https://github.com/MyJetTools/my-http-server),
 which depends on my-http-utils) its own macros generate controllers and request parsing from the same
-markup. my-http-utils has no hyper/tokio/server dependencies, so models compile to
-`wasm32-unknown-unknown`.
+markup. my-http-utils has no hyper and no server dependencies (its only tokio is `tokio/sync`, for
+the body-stream channel), so models compile to `wasm32-unknown-unknown`.
 
 ## Workspace
 
@@ -26,15 +26,19 @@ markup. my-http-utils has no hyper/tokio/server dependencies, so models compile 
   `MyHttpObjectStructure` / `MyHttpInputObjectStructure`), the
   [`http_input`](#server-side-parsing-server-feature) **parse engine**, and the derive-generated
   **`parse`** / `READS_BODY` / `STREAMS_BODY`. All of it is a server concern; all of it is still
-  wasm-safe, just not compiled into clients that don't ask for it. The one dependency it adds is
-  `tokio` with **only** the `sync` feature — the mpsc channel behind
-  [`HttpBodyAsStream`](#streaming-the-request-body-server-feature). No runtime, no mio, no
-  transport, and still no hyper.
+  wasm-safe, just not compiled into clients that don't ask for it. It adds **no** dependency of its
+  own.
 
   Note the `http_input` **field types** (`RawData`, `RawDataTyped<T>`, `FileContent`,
   `HttpBodyAsStream`, `HttpParseError`, `PasswordHttpInputField`) are **not** gated — a model
   shared between a client
   and a server names them, so they must compile for a wasm client too. Only the engine is gated.
+
+The one always-on dependency worth naming is `tokio` with **only** the `sync` feature: the mpsc
+channel behind [`HttpBodyAsStream`](#streaming-the-request-body). It is not feature-gated, because
+the same channel streams an **incoming** body on the server and an **outgoing** one on the client.
+No runtime, no mio, no transport, and still no hyper — `tokio/sync` is platform-independent and
+compiles for wasm.
 
 ## Main types
 
@@ -62,7 +66,7 @@ goes in the request:
 | `#[http_body(name = "…")]` | one **root key of the JSON body** object |
 | `#[http_form_data(name = "…")]` | one **`multipart/form-data`** field |
 | `#[http_body_raw]` | the **entire body IS this one field** — verbatim `Vec<u8>` (or `RawData` / `RawDataTyped<T>` / `String`) |
-| `#[http_body_as_stream]` | the **entire body is read as a stream**, chunk by chunk — never materialised (`HttpBodyAsStream`) |
+| `#[http_body_as_stream]` | the **entire body is streamed**, chunk by chunk, in either direction — never materialised (`HttpBodyAsStream`) |
 
 Common params on every field attribute: `name`, `description`, `default`, `validator`, `trim`,
 `to_lowercase`, `to_uppercase`, `print_request_to_console`. On the client these shape the outgoing
@@ -73,8 +77,9 @@ value (trim → case → validator); `default` only marks the schema param non-r
 - `#[http_body]` — the JSON body is an object of the named body fields (`{"name": …, "age": …}`).
 - `#[http_form_data]` — the body is `multipart/form-data`, one part per field.
 - `#[http_body_raw]` — the whole body is a single field: verbatim `Vec<u8>`, `RawData`, `RawDataTyped<T>`, or `String`.
-- `#[http_body_as_stream]` — the whole body is read as a stream of chunks and is never held in
-  memory whole (see [Streaming the request body](#streaming-the-request-body-server-feature)).
+- `#[http_body_as_stream]` — the whole body is a stream of chunks and is never held in memory
+  whole; works both for reading an incoming body and for sending an outgoing one
+  (see [Streaming the request body](#streaming-the-request-body)).
 
 `#[http_path]` / `#[http_query]` / `#[http_header]` combine freely with any one body kind. Mixing
 two body kinds in one model is a **compile error** ("choose one of …") — the last one especially:
@@ -190,7 +195,7 @@ type — both carry their own conversion and are unaffected.
 | type | what it's for |
 |---|---|
 | `my_http_utils::UrlBuilder` | build / inspect a URL (path segments + query, TCP or unix-socket) |
-| `my_http_utils::body::HttpRequestBody` | an outgoing body: `Json` / `UrlEncoded` / `FormData` / `Raw` / `Empty` |
+| `my_http_utils::body::HttpRequestBody` | an outgoing body: `Json` / `UrlEncoded` / `FormData` / `Raw` / `Stream` / `Empty`. A transport must handle `Stream` (or check `is_stream()`) **before** `into_vec()` — a streamed body has no bytes to give, and `into_vec()` returns an empty `Vec` |
 | `my_http_utils::body::{FormDataBody, UrlEncodedBody}` | build `multipart/form-data` / `x-www-form-urlencoded` bodies |
 | `my_http_utils::url_encoded_data_reader::UrlEncodedDataReader` | read `x-www-form-urlencoded` (query strings / bodies) |
 | `my_http_utils::form_data_reader::FormDataReader` | read `multipart/form-data` |
@@ -223,9 +228,10 @@ in `http_input::core`**:
 **The gate follows that split, not the module.** The field types are compiled unconditionally —
 a `#[http_body_raw] body: RawDataTyped<T>` or `#[http_body_as_stream] body: HttpBodyAsStream` model
 must compile in an `*-api-shared` crate that the wasm client builds **without** `server`, which is
-the whole point of the shared-model pattern. Only the engine (`HttpInputValue`, `http_input::core`
-minus the `data_src` tags, and the channel machinery inside `HttpBodyAsStream`) is behind `server`,
-so a client still carries none of the parsing code — and no tokio.
+the whole point of the shared-model pattern. Only the engine (`HttpInputValue` and
+`http_input::core` minus the `data_src` tags) is behind `server`, so a client still carries none of
+the parsing code. `HttpBodyAsStream` and its channel are not gated at all — the client needs them to
+*send* a streamed body.
 
 `MyHttpInput` then additionally generates, for `Model`:
 
@@ -279,7 +285,7 @@ get a `TryFrom<HttpInputValue>` so they parse too.
 | `http_input::HttpInputValue` | a single read value, before conversion to a field's type |
 | `http_input::HttpParseError` | parse failure: `RequiredParameterIsMissing{name,src}`, `CanNotParseValue{name,src,value}`, `UrlDecodeError`, `InvalidBodyFormat`, `NotSupportedContentType`, `Forbidden`, `Validation`, `BodyStream` |
 | `http_input::{RawData, RawDataTyped<T>, FileContent}` | body/file field types: verbatim bytes / verbatim bytes the handler turns into `T` on demand via `RawDataTyped::deserialize_json` / an uploaded `multipart/form-data` file |
-| `http_input::{HttpBodyAsStream, HttpBodyReader, HttpBodyStreamSender}` | the `#[http_body_as_stream]` field type, the handler's chunk reader, and the half the transport fills |
+| `http_input::{HttpBodyAsStream, HttpBodyReader, HttpBodyStreamSender}` | the `#[http_body_as_stream]` field type and the two ends of its channel — ungated, and used in both directions (see [Streaming the request body](#streaming-the-request-body)) |
 | `http_input::PasswordHttpInputField` | a ready-made `#[http_input_field]` type — a `String` rendered as OpenAPI `password` |
 | `http_input::core::data_src::SRC_*` | source tags carried by values/errors (`Path`, `QueryString`, `Header`, `BodyJson`, …) |
 
@@ -307,7 +313,8 @@ through `f64`) and a `RawData` / `RawDataTyped` field gets the member's original
   `parse`. An **Option** `#[http_body_raw]` reads a *named* body field instead.
 - `#[http_body_as_stream]` — never `Option` (a compile error). `parse` reads nothing: it moves the
   already-live `HttpBodyAsStream` out of `THttpRequest::take_body_stream()` into the field, and
-  fails with `HttpParseError::BodyStream` if the implementation has none to give.
+  fails with `HttpParseError::BodyStream` if the implementation has none to give. The *client* half
+  of the same field is in [Streaming the request body](#streaming-the-request-body).
 - `trim` / `to_lowercase` / `to_uppercase` apply to `String` fields after reading.
 
 **Validators.** `validator = "fn"` uses the **same** contract as the client builder —
@@ -432,15 +439,18 @@ other `http_input` field types are not feature-gated (only the parse engine is),
 sides** — the client serialises `T` with serde and the server deserialises it with serde — so unlike
 a nested `#[http_body]` object it honours every serde attribute.
 
-### Streaming the request body (`server` feature)
+### Streaming the request body
 
-Every other body kind materialises the body: `parse` is synchronous and reads it out of
-`THttpRequest::get_body() -> &[u8]`. For large uploads and proxy scenarios that is exactly wrong —
-`#[http_body_as_stream]` hands the handler a **stream of chunks** instead, and the body is never
-held in memory whole:
+Every other body kind materialises the body whole. For large uploads and proxy scenarios that is
+exactly wrong — `#[http_body_as_stream]` carries the body as a **stream of chunks** instead, and it
+never exists in memory in one piece.
+
+The type works in **both directions**, from one and the same model: a server reads an incoming body
+with it, a client sends an outgoing one. Only the roles invert — bytes always flow
+`HttpBodyStreamSender` → `HttpBodyReader`; who holds which end is what changes.
 
 ```rust
-use my_http_utils::http_input::HttpBodyAsStream;
+use my_http_utils::http_input::{HttpBodyAsStream, BODY_STREAM_DEFAULT_BUFFER};
 use my_http_utils::macros::*;
 
 #[derive(MyHttpInput)]
@@ -451,8 +461,13 @@ pub struct UploadHttpInput {
     #[http_body_as_stream(description = "File content")]
     pub body: HttpBodyAsStream,
 }
+```
 
-// in the handler:
+**Server — reading an incoming body.** my-http-server creates the channel and fills it from
+`hyper::body::Incoming` *before* `parse` runs; `parse` only moves the ready value into the field
+(via `THttpRequest::take_body_stream`). The handler takes the reader out:
+
+```rust
 let reader = input_data.body.get_body_reader()?;
 let expected = reader.get_content_length();      // Some(n) with Content-Length, None when chunked
 
@@ -461,53 +476,83 @@ while let Some(chunk) = reader.get_next_chunk().await? {
 }
 ```
 
-`get_next_chunk` takes **`&self`** (the receiver sits behind a `tokio::sync::Mutex`), so the reader
-can be put into an `Arc` and read from several places. `reader.read_to_end(max_size)` collects the
-rest into memory, with `max_size` as the safety valve.
+**Client — sending an outgoing body.** The application creates the channel itself and feeds it; the
+transport (fl-url) takes the reader and writes the chunks into the socket, or into a
+`ReadableStream` for `fetch` on wasm:
 
-**Split of responsibilities.** my-http-utils owns the channel and the *reading* half only —
-`tokio/sync` and nothing else, no hyper, no `tokio::spawn`, no idea where the bytes come from.
-my-http-server owns the complexity: it takes `hyper::body::Incoming`, loops over the frames, and
-fills the sending half:
+```rust
+let (sender, stream) = HttpBodyAsStream::create(BODY_STREAM_DEFAULT_BUFFER, Some(total_len));
+
+tokio::spawn(async move {
+    while let Some(chunk) = next_chunk_from_disk().await {
+        if !sender.send_chunk(chunk).await {
+            return;                      // the transport gave up — stop reading the disk
+        }
+    }
+    sender.finish();                     // the body is complete
+});
+
+let model = UploadHttpInput { file_name: "report.bin".into(), body: stream };
+// model.get_body::<Rnd>()  ->  HttpRequestBody::Stream(..)
+```
+
+`get_body` consumes the model, so the stream **moves** out — no clone, and the single-receiver
+invariant survives. A model with no body to send carries `HttpBodyAsStream::empty()`: it still
+yields `HttpRequestBody::Stream`, but `get_body_reader()` on it fails with
+`"Body stream is not available"`, which is how the transport tells the two apart.
+
+`HttpRequestBody::Stream` is the one variant with no bytes to hand over. A transport **must** match
+it (or check `is_stream()`) before calling `into_vec()`, which returns an empty `Vec` for it.
 
 | type | who holds it |
 |---|---|
-| `HttpBodyAsStream` | the model field. `create(buffer, content_length)` makes the pair; `empty()` is the client-side "nothing to stream" |
-| `HttpBodyReader` | the handler, via `get_body_reader()` — **once**; there is exactly one receiver, and a second call is an `Err` |
-| `HttpBodyStreamSender` | the transport: `send_chunk` / `send_error` / `closed` / `finish` |
+| `HttpBodyAsStream` | the model field. `create(buffer, content_length)` makes the pair; `empty()` is "nothing to stream" |
+| `HttpBodyStreamSender` | whoever produces the bytes: `send_chunk` / `send_error` / `closed` / `finish` |
+| `HttpBodyReader` | whoever consumes them, via `get_body_reader()` — **once**; there is exactly one receiver, and a second call is an `Err` |
+
+**Reading the chunks.** `get_next_chunk()` and `read_to_end(max_size)` take `&self` (the receiver
+sits behind a `tokio::sync::Mutex`), so the reader can be put into an `Arc` and read from several
+places. A transport that is itself a `Future` / `Body` — fl-url's `hyper::body::Body::poll_frame` —
+uses `poll_next_chunk(&mut self, cx)` instead: `&mut self` reaches the mutex through `get_mut()`,
+so there is no lock and no boxed future.
 
 **Back pressure is the point.** The channel is *bounded* (`BODY_STREAM_DEFAULT_BUFFER` = 4 by
-default), so memory per request is capped at roughly `buffer × chunk_size`. A pump that runs into a
-full channel parks on `send().await`, and that pressure propagates down to the TCP window. An
-unbounded channel would let a fast uploader eat memory instead.
+default), so memory per request is capped at roughly `buffer × chunk_size`. A producer that runs
+into a full channel parks on `send().await`, and that pressure propagates down to the TCP window.
+An unbounded channel would let a fast uploader eat memory instead.
 
 **A truncated body is an error, not an EOF.** A closed channel means "all senders dropped" — which
-happens both at a clean end *and* when the pump dies half-way. Treating the second as EOF would
-silently truncate the body. So the transport calls `finish()` right before dropping the sender, and
-a channel that ended without it yields `HttpParseError::BodyStream` rather than `Ok(None)`.
+happens both at a clean end *and* when the producer dies half-way. Treating the second as EOF would
+silently truncate the body. So the producer calls `finish()` right before dropping the sender, and a
+channel that ended without it yields `HttpParseError::BodyStream` rather than `Ok(None)` — from
+`get_next_chunk`, `read_to_end` and `poll_next_chunk` alike.
 
-**Such a model is not a client request.** It describes an *incoming* body, so its generated
-`get_body()` returns an `HttpRequestBuildError` instead of an empty body. The model still compiles
-for wasm without `server` (`HttpBodyAsStream` itself is not gated) — it only fails at runtime, and
-only if something actually tries to build an outgoing request out of it.
+**None of this is behind the `server` feature.** Both directions need the channel, so a wasm client
+that never enables `server` gets all of it. The one `server`-only piece is the OpenAPI
+`DataTypeProvider` impl, which describes the field as `binary`.
 
 ## wasm
 
 my-http-utils is wasm-compatible (`wasm32-unknown-unknown`): no hyper, no server-only code —
 including the `server` parse layer, which is wasm-safe but simply left out of clients that don't
-enable the feature. The default build pulls **no tokio at all**; `server` adds `tokio/sync` only
-(the `HttpBodyAsStream` channel), which is platform-independent and compiles for
-`wasm32-unknown-unknown` too — verified with `cargo build --target wasm32-unknown-unknown` both with
-and without the feature.
+enable the feature. The only tokio in the tree is `tokio/sync` (`default-features = false`) — the
+`HttpBodyAsStream` channel, which a client needs in order to *send* a streamed body. It carries no
+runtime, no mio and no transport, and is platform-independent. Verified with
+`cargo build --target wasm32-unknown-unknown`, both with and without `--features server`.
 
 ## Tests
 
 ```sh
-cargo test --workspace --all-features
+cargo test --workspace --all-features   # everything
+cargo test                              # the client path, with NO features on
 ```
 
 `--workspace` matters: the integration `tests` crate is a workspace member (not a dependency of the
 root library), so a bare `cargo test` only runs the root library's own unit tests and **skips it**.
+That is deliberate for one group of tests: the `tests` crate always enables `server`, so the
+client-side streaming path (`create` → model → `get_body()` → `HttpRequestBody::Stream` → reader)
+is covered by unit tests inside `src/http_input/body_as_stream.rs`, which a bare `cargo test` runs
+with no features — exactly what a wasm client compiles.
 That crate always enables `server`, and exercises the client request builder, the derive-generated
 `parse` end to end, and the body-stream channel (`tests/src/parse_tests.rs`,
 `tests/src/body_stream_tests.rs`, `tests/src/lib.rs`).

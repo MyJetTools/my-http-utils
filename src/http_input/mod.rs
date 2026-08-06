@@ -9,17 +9,21 @@
 //!
 //! This is the runtime half of the derive-generated sync `parse`. It was ported out of
 //! `my-http-server-core` so both the client (schema + request builder) and the server read the
-//! same field markup, and so the whole parse layer is wasm-safe (no hyper/tokio; `serde_json` for
-//! JSON).
+//! same field markup, and so the whole parse layer is wasm-safe (no hyper; `serde_json` for JSON,
+//! and `tokio/sync` for the body-stream channel — no runtime, no transport).
 //!
 //! **Feature gating.** The module itself is *always* compiled: a model shared between a client and
 //! a server names these field types (`RawDataTyped<T>` in a `#[http_body_raw]` field,
 //! `HttpBodyAsStream` in a `#[http_body_as_stream]` one, `PasswordHttpInputField`, …), and such a
 //! model must compile for a wasm client that does not enable `server`. Only the **parse engine** is
-//! gated behind `server` — the value type (`HttpInputValue`), the streaming machinery behind
-//! [`HttpBodyAsStream`] (its tokio channel, [`HttpBodyStreamSender`], [`HttpBodyReader`]), and
-//! everything under [`self::core`] except the source tags ([`self::core::data_src`]) and the one
-//! primitive converter the field types themselves need.
+//! gated behind `server` — the value type (`HttpInputValue`) and everything under [`self::core`]
+//! except the source tags ([`self::core::data_src`]) and the one primitive converter the field
+//! types themselves need.
+//!
+//! [`HttpBodyAsStream`] and its channel ([`HttpBodyStreamSender`] / [`HttpBodyReader`]) are
+//! **not** gated either — the same channel carries an *incoming* body on the server and an
+//! *outgoing* one on the client, so a wasm client that never enables `server` still needs all of
+//! it. Its only `server`-only part is the OpenAPI `DataTypeProvider` impl.
 //!
 //! (The `self::` prefixes are load-bearing: a bare `[`core`]` link resolves to Rust's builtin
 //! `core` crate, not to this module's own `core`.)
@@ -36,11 +40,12 @@ mod raw_data_typed;
 #[cfg(feature = "server")]
 mod value;
 
-// The model-facing type is ungated (a shared model names it in a `#[http_body_as_stream]` field);
-// the channel/sender/reader behind it are `server`-only.
-pub use body_as_stream::{HttpBodyAsStream, BODY_STREAM_DEFAULT_BUFFER};
-#[cfg(feature = "server")]
-pub use body_as_stream::{HttpBodyReader, HttpBodyStreamSender};
+// All ungated: the channel carries a body in BOTH directions — a server reading an incoming
+// `#[http_body_as_stream]` field, and a client streaming an outgoing body out of the same model —
+// so a wasm client that does not enable `server` needs the whole thing.
+pub use body_as_stream::{
+    HttpBodyAsStream, HttpBodyReader, HttpBodyStreamSender, BODY_STREAM_DEFAULT_BUFFER,
+};
 pub use error::HttpParseError;
 pub use file_content::FileContent;
 pub use password::PasswordHttpInputField;
