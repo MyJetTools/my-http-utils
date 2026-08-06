@@ -14,7 +14,12 @@ default = []
 # `READS_BODY`). Off by default so wasm clients pull only the schema + client request builder.
 # The whole `http_input` layer is wasm-safe (no hyper/tokio), so enabling `server` still
 # compiles for `wasm32-unknown-unknown` — it is simply not needed by browser clients.
-server = ["http-request-schema-macros/server"]
+#
+# `dep:tokio` comes with it, for one thing only: the `mpsc` channel behind
+# `http_input::HttpBodyAsStream` (streaming the request body). Only `tokio/sync` is enabled — no
+# `rt`, no `net`, no `macros` — so this pulls in no runtime, no mio and no transport, and stays
+# platform-independent (wasm included).
+server = ["http-request-schema-macros/server", "dep:tokio"]
 
 [dependencies]
 rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
@@ -29,3 +34,7 @@ my-json = { tag = "0.3.2", git = "https://github.com/MyJetTools/my-json.git" }
 # Re-exported as `my_http_utils::macros` so consumers use the derives via my-http-utils, not the
 # proc-macro crate directly. Proc-macro crates are host-only, so this does not affect wasm.
 http-request-schema-macros = { path = "http-request-schema-macros" }
+# ONLY `sync`, and only under the `server` feature: `HttpBodyAsStream` needs an mpsc channel and
+# a `Mutex`, nothing else. `default-features = false` keeps the runtime/mio/transport out, so the
+# crate stays wasm-safe and a client build carries no tokio at all.
+tokio = { version = "*", default-features = false, features = ["sync"], optional = true }

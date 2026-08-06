@@ -33,6 +33,21 @@ pub trait THttpRequest {
     fn get_content_type(&self) -> Option<&str> {
         self.get_header("content-type")
     }
+
+    /// Takes the body stream out, if this implementation can produce one. Called exactly once —
+    /// from `parse`, for a `#[http_body_as_stream]` field. A second call must return `None`.
+    ///
+    /// The channel is already created and being filled **before** `parse` runs, so `parse` only
+    /// moves the ready [`crate::http_input::HttpBodyAsStream`] into the model's field. No
+    /// source trait object is involved.
+    ///
+    /// `&self` is deliberate: `parse` is synchronous and gets the request by shared reference, so
+    /// an implementation uses interior mutability (`Cell` / `Mutex`).
+    ///
+    /// Defaults to `None`, so an implementation that does not stream needs no changes at all.
+    fn take_body_stream(&self) -> Option<crate::http_input::HttpBodyAsStream> {
+        None
+    }
 }
 
 /// Reads a required path value (path fields are never `Option`). The raw segment is wrapped as

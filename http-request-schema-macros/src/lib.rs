@@ -27,6 +27,7 @@ mod types;
         http_form_data,
         http_body,
         http_body_raw,
+        http_body_as_stream,
         debug,
     )
 )]

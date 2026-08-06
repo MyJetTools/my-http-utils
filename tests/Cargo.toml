@@ -15,3 +15,9 @@ my-http-utils = { path = "..", features = ["server"] }
 serde = { version = "*", features = ["derive"] }
 serde_json = { version = "*" }
 rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
+
+[dev-dependencies]
+# Only the body-stream tests need a runtime: they play the role my-http-server plays in
+# production — spawning a pump that fills the sending half of the channel. The library itself
+# still uses nothing but `tokio/sync`.
+tokio = { version = "*", features = ["rt", "macros", "time"] }

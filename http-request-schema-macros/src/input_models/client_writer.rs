@@ -314,6 +314,23 @@ fn generate_get_body(props: &HttpInputProperties) -> Result<TokenStream, syn::Er
         });
     }
 
+    // A `#[http_body_as_stream]` model describes an INCOMING body; there is nothing to send. Fail
+    // loudly rather than panic or silently produce an `Empty` body that would look like a working
+    // request. This arm compiles without the `server` feature too (wasm) — it only fails at
+    // runtime, and only if someone actually tries to build an outgoing request from such a model.
+    if let Some(field) = &props.body_as_stream_field {
+        let name = field.get_input_field_name()?;
+        return Ok(quote! {
+            #[allow(clippy::extra_unused_type_parameters)]
+            fn get_body<__TRnd: my_http_utils::schema::client::RandomStringGenerator>(self) -> Result<my_http_utils::body::HttpRequestBody, my_http_utils::schema::client::HttpRequestBuildError> {
+                Err(my_http_utils::schema::client::HttpRequestBuildError::new(
+                    #name,
+                    "#[http_body_as_stream] model can not be used to build a client request",
+                ))
+            }
+        });
+    }
+
     // No body -> emit an Empty get_body (trait has no default).
     Ok(quote! {
         #[allow(clippy::extra_unused_type_parameters)]

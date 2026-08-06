@@ -8,6 +8,9 @@ pub enum HttpFieldAttribute<'s> {
     HttpBody(HttpBodyAttribute<'s>),
     HttpFormData(HttpFormDataAttribute<'s>),
     HttpBodyRaw(HttpBodyRawAttribute<'s>),
+    /// `#[http_body_as_stream]` — carries only `name`/`description`; every outgoing-value
+    /// directive below is therefore constant for it (no default, no validator, no transforms).
+    HttpBodyAsStream(HttpBodyAsStreamAttribute<'s>),
     HttpPath(HttpPathAttribute<'s>),
 }
 
@@ -21,6 +24,7 @@ impl<'s> HttpFieldAttribute<'s> {
             Self::HttpBody(a) => a.default.is_some(),
             Self::HttpFormData(a) => a.default.is_some(),
             Self::HttpBodyRaw(a) => a.default.is_some(),
+            Self::HttpBodyAsStream(_) => false,
             Self::HttpPath(a) => a.default.is_some(),
         }
     }
@@ -34,6 +38,7 @@ impl<'s> HttpFieldAttribute<'s> {
             Self::HttpBody(a) => a.default.clone(),
             Self::HttpFormData(a) => a.default.clone(),
             Self::HttpBodyRaw(a) => a.default.clone(),
+            Self::HttpBodyAsStream(_) => None,
             Self::HttpPath(a) => a.default.clone(),
         };
 
@@ -49,6 +54,9 @@ impl<'s> HttpFieldAttribute<'s> {
             Self::HttpBody(_) => quote::quote!(#http_parameter_input_src::BodyModel),
             Self::HttpFormData(_) => quote::quote!(#http_parameter_input_src::FormData),
             Self::HttpBodyRaw(_) => quote:: quote!(#http_parameter_input_src::BodyRaw),
+            // Same source as a raw body from the schema's point of view: the whole body IS this
+            // field. No new `HttpParameterInputSource` variant is needed.
+            Self::HttpBodyAsStream(_) => quote::quote!(#http_parameter_input_src::BodyRaw),
         }
     }
 
@@ -59,6 +67,7 @@ impl<'s> HttpFieldAttribute<'s> {
             Self::HttpBody(http_body) => http_body.description,
             Self::HttpFormData(http_form_data) => http_form_data.description,
             Self::HttpBodyRaw(http_body_raw) => http_body_raw.description,
+            Self::HttpBodyAsStream(http_body_as_stream) => http_body_as_stream.description,
             Self::HttpPath(http_path) => http_path.description,
         }
     }
@@ -70,6 +79,7 @@ impl<'s> HttpFieldAttribute<'s> {
             Self::HttpBody(http_body) => http_body.name,
             Self::HttpFormData(http_form_data) => http_form_data.name,
             Self::HttpBodyRaw(http_body_raw) => http_body_raw.name,
+            Self::HttpBodyAsStream(http_body_as_stream) => http_body_as_stream.name,
             Self::HttpPath(http_path) => http_path.name,
         }
     }
@@ -82,6 +92,7 @@ impl<'s> HttpFieldAttribute<'s> {
             Self::HttpBody(a) => a.validator,
             Self::HttpFormData(a) => a.validator,
             Self::HttpBodyRaw(a) => a.validator,
+            Self::HttpBodyAsStream(_) => None,
             Self::HttpPath(a) => a.validator,
         }
     }
@@ -93,6 +104,7 @@ impl<'s> HttpFieldAttribute<'s> {
             Self::HttpBody(a) => a.trim,
             Self::HttpFormData(a) => a.trim,
             Self::HttpBodyRaw(a) => a.trim,
+            Self::HttpBodyAsStream(_) => false,
             Self::HttpPath(a) => a.trim,
         }
     }
@@ -104,6 +116,7 @@ impl<'s> HttpFieldAttribute<'s> {
             Self::HttpBody(a) => a.to_lowercase,
             Self::HttpFormData(a) => a.to_lowercase,
             Self::HttpBodyRaw(a) => a.to_lowercase,
+            Self::HttpBodyAsStream(_) => false,
             Self::HttpPath(a) => a.to_lowercase,
         }
     }
@@ -115,6 +128,7 @@ impl<'s> HttpFieldAttribute<'s> {
             Self::HttpBody(a) => a.to_uppercase,
             Self::HttpFormData(a) => a.to_uppercase,
             Self::HttpBodyRaw(a) => a.to_uppercase,
+            Self::HttpBodyAsStream(_) => false,
             Self::HttpPath(a) => a.to_uppercase,
         }
     }
@@ -126,6 +140,7 @@ impl<'s> HttpFieldAttribute<'s> {
             Self::HttpBody(a) => a.print_request_to_console,
             Self::HttpFormData(a) => a.print_request_to_console,
             Self::HttpBodyRaw(a) => a.print_request_to_console,
+            Self::HttpBodyAsStream(_) => false,
             Self::HttpPath(a) => a.print_request_to_console,
         }
     }
@@ -158,6 +173,12 @@ impl<'s> From<HttpFormDataAttribute<'s>> for HttpFieldAttribute<'s> {
 impl<'s> From<HttpBodyRawAttribute<'s>> for HttpFieldAttribute<'s> {
     fn from(value: HttpBodyRawAttribute<'s>) -> Self {
         HttpFieldAttribute::HttpBodyRaw(value)
+    }
+}
+
+impl<'s> From<HttpBodyAsStreamAttribute<'s>> for HttpFieldAttribute<'s> {
+    fn from(value: HttpBodyAsStreamAttribute<'s>) -> Self {
+        HttpFieldAttribute::HttpBodyAsStream(value)
     }
 }
 

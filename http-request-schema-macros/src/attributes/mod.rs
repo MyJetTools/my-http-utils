@@ -10,6 +10,8 @@ mod http_body;
 pub use http_body::*;
 mod http_body_raw;
 pub use http_body_raw::*;
+mod http_body_as_stream;
+pub use http_body_as_stream::*;
 mod ignore;
 pub use ignore::*;
 mod enum_case;

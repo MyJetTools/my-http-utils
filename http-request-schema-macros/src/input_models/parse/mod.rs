@@ -57,10 +57,15 @@ pub fn generate_parse(
     }
 
     // ---- body: json / form-data (named fields) and/or raw (whole body) ----
-    // READS_BODY is true whenever the model touches the body at all.
+    // READS_BODY is true whenever the model needs the body MATERIALISED before `parse` runs.
+    // `#[http_body_as_stream]` deliberately does NOT count: the body must not be both
+    // materialised and streamed, so a streaming model reports READS_BODY = false and
+    // STREAMS_BODY = true instead.
     let reads_body = props.body_fields.is_some()
         || props.form_data_fields.is_some()
         || props.body_raw_field.is_some();
+
+    let streams_body = props.body_as_stream_field.is_some();
 
     // The parsing `BodyReader` (content-type dispatch) is only needed for reading NAMED body
     // fields — json / form-data, or an Option `#[http_body_raw]` (which reads a named field).
@@ -110,12 +115,30 @@ pub fn generate_parse(
         fields_to_return.push(read_body_raw(raw_field)?);
     }
 
+    // The stream is created and already being filled by the transport BEFORE `parse` runs, so
+    // `parse` only moves the ready `HttpBodyAsStream` into the field — inline into the struct
+    // literal, like `read_body_raw`. No `BodyReader` is built for such a model.
+    if let Some(stream_field) = &props.body_as_stream_field {
+        let ident = stream_field.property.get_field_name_ident();
+        fields_to_return.push(quote! {
+            #ident: request.take_body_stream().ok_or_else(||
+                my_http_utils::http_input::HttpParseError::BodyStream(
+                    "Body stream is not available".to_string()))?
+        });
+    }
+
     Ok(quote! {
         impl #name {
             /// `true` when this model reads the request body (`http_body` / `http_body_raw` /
             /// `http_form_data`). The server uses it to avoid reading the body when it is not
             /// needed before calling [`Self::parse`].
             pub const READS_BODY: bool = #reads_body;
+
+            /// `true` when this model takes the body as a stream (`#[http_body_as_stream]`).
+            /// Mutually exclusive with [`Self::READS_BODY`] — the body cannot be both
+            /// materialised and streamed. Emitted for **every** model (`false` for the rest), so
+            /// the server codegen that reads it always compiles.
+            pub const STREAMS_BODY: bool = #streams_body;
 
             /// Parses the model out of an abstract [`my_http_utils::http_input::core::THttpRequest`].
             /// Synchronous: the body is expected to be already received (see [`Self::READS_BODY`]).

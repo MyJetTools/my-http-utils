@@ -14,16 +14,19 @@
 //!
 //! **Feature gating.** The module itself is *always* compiled: a model shared between a client and
 //! a server names these field types (`RawDataTyped<T>` in a `#[http_body_raw]` field,
-//! `PasswordHttpInputField`, …), and such a model must compile for a wasm client that does not
-//! enable `server`. Only the **parse engine** is gated behind `server` — the value type
-//! (`HttpInputValue`) and everything under [`self::core`] except the source tags
-//! ([`self::core::data_src`]) and the one primitive converter the field types themselves need.
+//! `HttpBodyAsStream` in a `#[http_body_as_stream]` one, `PasswordHttpInputField`, …), and such a
+//! model must compile for a wasm client that does not enable `server`. Only the **parse engine** is
+//! gated behind `server` — the value type (`HttpInputValue`), the streaming machinery behind
+//! [`HttpBodyAsStream`] (its tokio channel, [`HttpBodyStreamSender`], [`HttpBodyReader`]), and
+//! everything under [`self::core`] except the source tags ([`self::core::data_src`]) and the one
+//! primitive converter the field types themselves need.
 //!
 //! (The `self::` prefixes are load-bearing: a bare `[`core`]` link resolves to Rust's builtin
 //! `core` crate, not to this module's own `core`.)
 
 pub mod core;
 
+mod body_as_stream;
 mod error;
 mod file_content;
 mod password;
@@ -33,6 +36,11 @@ mod raw_data_typed;
 #[cfg(feature = "server")]
 mod value;
 
+// The model-facing type is ungated (a shared model names it in a `#[http_body_as_stream]` field);
+// the channel/sender/reader behind it are `server`-only.
+pub use body_as_stream::{HttpBodyAsStream, BODY_STREAM_DEFAULT_BUFFER};
+#[cfg(feature = "server")]
+pub use body_as_stream::{HttpBodyReader, HttpBodyStreamSender};
 pub use error::HttpParseError;
 pub use file_content::FileContent;
 pub use password::PasswordHttpInputField;

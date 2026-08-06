@@ -10,6 +10,9 @@ pub struct HttpInputProperties<'s> {
     pub body_fields: Option<Vec<InputField<'s>>>,
     pub form_data_fields: Option<Vec<InputField<'s>>>,
     pub body_raw_field: Option<InputField<'s>>,
+    /// The one `#[http_body_as_stream]` field, if any — the body is handed to the model as a
+    /// chunk stream instead of being materialised.
+    pub body_as_stream_field: Option<InputField<'s>>,
     pub path_fields: Option<Vec<InputField<'s>>>,
 }
 
@@ -24,6 +27,8 @@ impl<'s> HttpInputProperties<'s> {
         let mut form_data_fields = LazyVec::with_capacity(props.len());
 
         let mut body_raw_field = None;
+
+        let mut body_as_stream_field = None;
 
         for struct_property in props {
             if struct_property.attrs.has_attr(IgnoreAttribute::NAME) {
@@ -76,6 +81,19 @@ impl<'s> HttpInputProperties<'s> {
 
                 continue;
             }
+
+            let attr: Option<HttpBodyAsStreamAttribute> = struct_property.try_get_attribute()?;
+
+            if let Some(attr) = attr {
+                if body_as_stream_field.is_some() {
+                    struct_property
+                        .throw_error("#[http_body_as_stream] can be used on only one field")?;
+                }
+
+                body_as_stream_field = Some(InputField::new(struct_property, attr));
+
+                continue;
+            }
         }
 
         let result = Self {
@@ -84,6 +102,7 @@ impl<'s> HttpInputProperties<'s> {
             query_string_fields: query_string_fields.get_result(),
             path_fields: path_fields.get_result(),
             body_raw_field,
+            body_as_stream_field,
             form_data_fields: form_data_fields.get_result(),
         };
 
@@ -93,8 +112,10 @@ impl<'s> HttpInputProperties<'s> {
     }
 
     fn self_check(&self) -> Result<(), syn::Error> {
-        // A model may use only ONE body kind: #[http_body], #[http_form_data] or
-        // #[http_body_raw]. Report a single, clear "choose one" error if more than one is used.
+        // A model may use only ONE body kind: #[http_body], #[http_form_data], #[http_body_raw]
+        // or #[http_body_as_stream]. Report a single, clear "choose one" error if more than one
+        // is used. Streaming is exclusive with the rest for a hard reason: the body cannot be
+        // materialised and streamed at the same time.
         let mut body_kinds: Vec<&'static str> = Vec::new();
         if self.body_fields.is_some() {
             body_kinds.push("#[http_body]");
@@ -105,12 +126,16 @@ impl<'s> HttpInputProperties<'s> {
         if self.body_raw_field.is_some() {
             body_kinds.push("#[http_body_raw]");
         }
+        if self.body_as_stream_field.is_some() {
+            body_kinds.push("#[http_body_as_stream]");
+        }
         if body_kinds.len() > 1 {
             // Point the error at some body field so the message is actionable.
             let span = self
-                .body_raw_field
+                .body_as_stream_field
                 .as_ref()
                 .map(|f| f.property.field)
+                .or_else(|| self.body_raw_field.as_ref().map(|f| f.property.field))
                 .or_else(|| {
                     self.form_data_fields
                         .as_ref()
@@ -129,7 +154,8 @@ impl<'s> HttpInputProperties<'s> {
                 span,
                 format!(
                     "a model can use only one body kind, but found {}. \
-                     Choose one of: #[http_body], #[http_form_data], #[http_body_raw]",
+                     Choose one of: #[http_body], #[http_form_data], #[http_body_raw], \
+                     #[http_body_as_stream]",
                     body_kinds.join(" + ")
                 ),
             ));
@@ -149,6 +175,18 @@ impl<'s> HttpInputProperties<'s> {
 
         if let Some(query_string_fields) = &self.query_string_fields {
             check_duplicated(query_string_fields)?;
+        }
+
+        // `HttpBodyAsStream` is always produced by the transport (`empty()` when there is nothing
+        // to stream), so there is no "absent" case an Option could carry — and `parse` has no
+        // meaningful `None` to fall back to.
+        if let Some(body_as_stream_field) = &self.body_as_stream_field {
+            if body_as_stream_field.property.ty.is_option() {
+                return Err(syn::Error::new_spanned(
+                    body_as_stream_field.property.field,
+                    "#[http_body_as_stream] field can not be Option",
+                ));
+            }
         }
 
         if let Some(path_fields) = &self.path_fields {
@@ -187,6 +225,10 @@ impl<'s> HttpInputProperties<'s> {
 
         if let Some(body_raw_field) = &self.body_raw_field {
             result.push(body_raw_field);
+        }
+
+        if let Some(body_as_stream_field) = &self.body_as_stream_field {
+            result.push(body_as_stream_field);
         }
 
         if let Some(path_fields) = &self.path_fields {

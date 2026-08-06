@@ -33,6 +33,10 @@ pub enum HttpParseError {
     Forbidden(String),
     /// A field `validator` rejected the value.
     Validation(String),
+    /// Streaming the body (`#[http_body_as_stream]`) failed: the stream broke off mid-body, the
+    /// stream is not available / its reader was already taken, a size limit was exceeded, or the
+    /// channel ended without the transport marking the body complete.
+    BodyStream(String),
 }
 
 impl HttpParseError {
@@ -138,6 +142,7 @@ impl std::fmt::Display for HttpParseError {
             Self::NotSupportedContentType(msg) => write!(f, "Not supported content type: {}", msg),
             Self::Forbidden(msg) => write!(f, "Forbidden: {}", msg),
             Self::Validation(msg) => write!(f, "Validation error: {}", msg),
+            Self::BodyStream(msg) => write!(f, "Body stream error: {}", msg),
         }
     }
 }
