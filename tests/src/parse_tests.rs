@@ -165,6 +165,73 @@ fn json_body() {
     assert_eq!(model.age, 30);
 }
 
+// ---- JSON escapes in a `#[http_body]` string field ---------------------------
+//
+// A named string member must arrive with its escapes RESOLVED. The reader used to call
+// `JsonValueRef::as_unescaped_str()`, which - despite the name - only strips the surrounding
+// quotes, so a JSON document carried inside a string field came back still escaped.
+
+#[derive(MyHttpInput)]
+struct EscapedBody {
+    #[http_body(name = "paramsJson", description = "")]
+    params_json: String,
+}
+
+#[test]
+fn json_body_string_field_resolves_escapes() {
+    let request =
+        FakeRequest::default().body("application/json", r#"{"paramsJson":"{\"a\":1}"}"#);
+
+    let model = EscapedBody::parse(&request).unwrap();
+    assert_eq!(model.params_json, r#"{"a":1}"#);
+}
+
+#[test]
+fn json_body_string_field_resolves_every_escape_kind() {
+    for (wire, expected) in [
+        (r#""{\"a\":1}""#, r#"{"a":1}"#),
+        (r#""a\\b""#, r"a\b"),
+        (r#""line1\nline2""#, "line1\nline2"),
+        (r#""tab\there""#, "tab\there"),
+        (r#""a\/b""#, "a/b"),
+        (r#""AB""#, "AB"),
+        // Surrogate pair -> a single astral char.
+        (r#""😀""#, "\u{1f600}"),
+        (r#""""#, ""),
+        // Nothing to resolve: the borrowed fast path must not alter the value.
+        (r#""plain""#, "plain"),
+    ] {
+        let body = format!(r#"{{"paramsJson":{}}}"#, wire);
+        let request = FakeRequest::default().body("application/json", body.clone());
+
+        let model = EscapedBody::parse(&request)
+            .unwrap_or_else(|e| panic!("{} failed to parse: {:?}", body, e));
+
+        assert_eq!(model.params_json, expected, "wire form {}", wire);
+    }
+}
+
+#[test]
+fn escaped_string_round_trips_through_the_client_writer() {
+    // The client half escapes on the way out, so the server half must unescape on the way in -
+    // otherwise this crate can not read back what it itself wrote.
+    for original in [
+        r#"{"a":1}"#,
+        r"back\slash",
+        "with \"quotes\" inside",
+        "line1\nline2",
+        "\u{1f600} unicode",
+        "",
+    ] {
+        let sent = EscapedBody {
+            params_json: original.to_string(),
+        };
+
+        let parsed = EscapedBody::parse(&round_trip(sent)).unwrap();
+        assert_eq!(parsed.params_json, original);
+    }
+}
+
 #[test]
 fn url_encoded_body() {
     let request = FakeRequest::default().body(
@@ -1018,6 +1085,25 @@ fn nested_enum_round_trips_through_the_real_parse() {
 }
 
 #[test]
+fn nested_enum_reads_a_case_value_or_id_through_my_json() {
+    // The `JsonValueReader` half (not serde) - the branch the escape fix rewrote. A case id may
+    // arrive as text or as a bare JSON number, and both must keep working.
+    for body in [
+        r#"{"n":{"c":"bright-red","l":"five","oc":null,"v":[]}}"#,
+        r#"{"n":{"c":"0","l":"5","oc":null,"v":[]}}"#,
+        r#"{"n":{"c":0,"l":5,"oc":null,"v":[]}}"#,
+    ] {
+        let request = FakeRequest::default().body("application/json", body);
+
+        let parsed =
+            EnumBody::parse(&request).unwrap_or_else(|e| panic!("{}: {:?}", body, e));
+
+        assert_eq!(parsed.n.c, NestedColor::BrightRed, "body {}", body);
+        assert_eq!(parsed.n.l, NestedLevel::Five, "body {}", body);
+    }
+}
+
+#[test]
 fn nested_enum_deserialize_takes_value_or_id() {
     // `TryFrom<HttpInputValue>` accepts the case value or its id; serde must not invent a second,
     // narrower behaviour. The id is accepted both as text and as a JSON number.
@@ -1039,6 +1125,45 @@ fn nested_enum_rejects_an_unknown_case() {
 
     let err = err.to_string();
     assert!(err.contains("nope") && err.contains("bright-red"), "unhelpful error: {}", err);
+}
+
+// ---- a case value that has to be escaped on the wire -------------------------------------------
+//
+// `JsonValueWriter` escapes the case value on the way out, so the generated `JsonValueReader` has
+// to resolve escapes on the way in. Reading with a quotes-only routine leaves `\"` in the text and
+// no arm matches, so the crate fails to read back what it itself wrote.
+
+#[derive(Debug, Clone, Copy, PartialEq, MyHttpStringEnum)]
+enum QuotedCase {
+    #[http_enum_case(id = "0", value = "say \"hi\"", description = "Quoted", default)]
+    SaysHi,
+    #[http_enum_case(id = "1", value = "back\\slash", description = "Backslash")]
+    BackSlash,
+}
+
+#[derive(Debug, MyHttpInputObjectStructure)]
+struct WithQuotedCase {
+    c: QuotedCase,
+}
+
+#[derive(MyHttpInput)]
+struct QuotedCaseBody {
+    #[http_body(name = "n", description = "Nested")]
+    n: WithQuotedCase,
+}
+
+#[test]
+fn nested_enum_with_an_escaped_case_value_round_trips() {
+    for case in [QuotedCase::SaysHi, QuotedCase::BackSlash] {
+        let sent = QuotedCaseBody {
+            n: WithQuotedCase { c: case },
+        };
+
+        let parsed = QuotedCaseBody::parse(&round_trip(sent))
+            .unwrap_or_else(|e| panic!("{:?} did not survive the round trip: {:?}", case, e));
+
+        assert_eq!(parsed.n.c, case);
+    }
 }
 
 // ---- #[json_name] and the serde-free path ------------------------------------------------------

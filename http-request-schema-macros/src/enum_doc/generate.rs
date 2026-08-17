@@ -186,16 +186,17 @@ fn generate_serde_impls(
                 __value: &my_http_utils::my_json::json_reader::JsonValueRef<'s>,
             ) -> Result<Self, my_http_utils::my_json::json_reader::JsonParseError> {
                 // A case id may arrive as a bare JSON number rather than a string.
-                let __owned;
-                let __s = match __value.as_unescaped_str() {
+                // `as_str()` resolves escapes; `as_unescaped_str()` would only strip the quotes,
+                // so a variant value the writer had to escape (`"`, `\`, a control char) would
+                // come back as `\"`/`\\` and never match its own arm - the client's own round
+                // trip would fail with `unknown value`. `None` here means JSON `null` or
+                // non-UTF-8 bytes, which keeps the lossy fallback meaningful.
+                let __owned = match __value.as_str() {
                     Some(__s) => __s,
-                    None => {
-                        __owned = String::from_utf8_lossy(__value.as_slice()).into_owned();
-                        __owned.as_str()
-                    }
+                    None => String::from_utf8_lossy(__value.as_slice()).into_owned().into(),
                 };
 
-                match __s {
+                match __owned.as_str() {
                     #(#arms)*
                     __other => Err(my_http_utils::my_json::json_reader::JsonParseError::new(
                         format!(

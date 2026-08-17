@@ -38,10 +38,17 @@ impl<'s> JsonEncodedValueAsString<'s> {
         std::str::from_utf8(self.value.as_slice()).unwrap_or("")
     }
 
-    /// The unescaped contents of a JSON string member (quotes stripped, escapes resolved).
-    fn as_unescaped_string(&self) -> Result<String, HttpParseError> {
-        match self.value.as_unescaped_str() {
-            Some(text) => Ok(text.to_string()),
+    /// The contents of a JSON string member: quotes stripped **and** escapes resolved (`\"`, `\\`,
+    /// `\n`, `\uXXXX` including surrogate pairs).
+    ///
+    /// `as_str()`, not `as_unescaped_str()` — despite its name the latter only strips the
+    /// surrounding quotes and hands the escape sequences back verbatim, so
+    /// `{"paramsJson":"{\"a\":1}"}` would yield `{\"a\":1}` instead of `{"a":1}`. `as_str()`
+    /// borrows when the token is escape-free and allocates only when it is not; both return `None`
+    /// on exactly the same inputs (JSON `null` / non-UTF-8), so the error path is unchanged.
+    fn as_decoded_string(&self) -> Result<String, HttpParseError> {
+        match self.value.as_str() {
+            Some(text) => Ok(text.into_string()),
             None => Err(HttpParseError::required(self.name, SRC_BODY_JSON)),
         }
     }
@@ -50,7 +57,7 @@ impl<'s> JsonEncodedValueAsString<'s> {
     /// arrays/objects/null. This is what `parse` / `as_bool` / `as_date_time` read.
     fn scalar_text(&self) -> Option<Result<String, HttpParseError>> {
         if self.value.is_string() {
-            Some(self.as_unescaped_string())
+            Some(self.as_decoded_string())
         } else if self.value.is_number() || self.value.is_double() || self.value.is_bool() {
             Some(Ok(self.raw_text().to_string()))
         } else {
@@ -60,7 +67,7 @@ impl<'s> JsonEncodedValueAsString<'s> {
 
     pub fn as_string(&self) -> Result<String, HttpParseError> {
         if self.value.is_string() {
-            self.as_unescaped_string()
+            self.as_decoded_string()
         } else if self.value.is_null() {
             // null never reaches here (null members are dropped when building JsonEncodedData).
             Err(HttpParseError::required(self.name, SRC_BODY_JSON))
