@@ -191,12 +191,26 @@ fn generate_serde_impls(
                 // come back as `\"`/`\\` and never match its own arm - the client's own round
                 // trip would fail with `unknown value`. `None` here means JSON `null` or
                 // non-UTF-8 bytes, which keeps the lossy fallback meaningful.
-                let __owned = match __value.as_str() {
-                    Some(__s) => __s,
-                    None => String::from_utf8_lossy(__value.as_slice()).into_owned().into(),
+                //
+                // Every call below is an INHERENT method and no arm goes through `.into()`:
+                // method resolution in derive output happens at the *derive site*, against every
+                // trait in the user's scope, so a downstream `trait Ext { fn into(self) -> u8 }`
+                // implemented for `String` turns a bare `.into()` here into E0034
+                // ("multiple applicable items in scope") pointing at the derive with no
+                // actionable location. Inherent methods win resolution and cannot collide.
+                let __decoded = __value.as_str();
+                let __lossy;
+
+                let __s = match &__decoded {
+                    Some(__value_as_str) => __value_as_str.as_str(),
+                    None => {
+                        __lossy = ::std::string::String::from_utf8_lossy(__value.as_slice())
+                            .into_owned();
+                        __lossy.as_str()
+                    }
                 };
 
-                match __owned.as_str() {
+                match __s {
                     #(#arms)*
                     __other => Err(my_http_utils::my_json::json_reader::JsonParseError::new(
                         format!(
