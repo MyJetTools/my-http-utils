@@ -188,27 +188,69 @@ fn json_body_string_field_resolves_escapes() {
 
 #[test]
 fn json_body_string_field_resolves_every_escape_kind() {
-    for (wire, expected) in [
-        (r#""{\"a\":1}""#, r#"{"a":1}"#),
-        (r#""a\\b""#, r"a\b"),
-        (r#""line1\nline2""#, "line1\nline2"),
-        (r#""tab\there""#, "tab\there"),
-        (r#""a\/b""#, "a/b"),
-        (r#""AB""#, "AB"),
-        // Surrogate pair -> a single astral char.
-        (r#""😀""#, "\u{1f600}"),
-        (r#""""#, ""),
+    // The JSON `\u`-plus-four-digits form is ASSEMBLED from a backslash and the digits instead of
+    // being written out as a source-level escape. A literal one is exactly what an editor, a
+    // formatter or a copy-paste can quietly fold into the character it denotes - and a row that has
+    // already been folded carries a plain `A`, passes against the broken reader too, and proves
+    // nothing. That is not hypothetical: the first version of this test shipped exactly that way.
+    let bs = '\\';
+
+    let cases: Vec<(String, &str)> = vec![
+        (r#""{\"a\":1}""#.to_string(), r#"{"a":1}"#),
+        (r#""a\\b""#.to_string(), r"a\b"),
+        (r#""line1\nline2""#.to_string(), "line1\nline2"),
+        (r#""tab\there""#.to_string(), "tab\there"),
+        (r#""a\/b""#.to_string(), "a/b"),
+        (r#""a\bb""#.to_string(), "a\u{8}b"),
+        (r#""a\fb""#.to_string(), "a\u{c}b"),
+        (r#""a\rb""#.to_string(), "a\rb"),
+        // The `\u` family proper.
+        (format!(r#""{bs}u0041{bs}u0042""#), "AB"),
+        (format!(r#""x{bs}u00e9y""#), "xéy"),
+        // A control char has no other JSON spelling, so `\u` is the only form a writer can emit.
+        (format!(r#""a{bs}u0000b""#), "a\u{0}b"),
+        // A surrogate PAIR must recombine into one astral char, not two replacement chars.
+        (format!(r#""{bs}ud83d{bs}ude00""#), "\u{1f600}"),
+        (r#""""#.to_string(), ""),
         // Nothing to resolve: the borrowed fast path must not alter the value.
-        (r#""plain""#, "plain"),
-    ] {
+        (r#""plain""#.to_string(), "plain"),
+        // Literal (unescaped) UTF-8 must survive that same fast path untouched.
+        (r#""😀 привет""#.to_string(), "😀 привет"),
+    ];
+
+    // Guard against the failure this test was rewritten for: if the assembled rows ever stop
+    // carrying a real escape, fail loudly instead of passing vacuously.
+    let escaped = cases
+        .iter()
+        .filter(|(wire, _)| wire.contains(&format!("{}u", bs)))
+        .count();
+    assert_eq!(escaped, 4, "the \\u rows lost their escapes - the test would be vacuous");
+
+    // Every row is exercised and the mismatches are reported together: asserting inside the loop
+    // aborts on the first bad row, which hides whether the rows after it prove anything at all.
+    let mut failures = Vec::new();
+
+    for (wire, expected) in cases {
         let body = format!(r#"{{"paramsJson":{}}}"#, wire);
         let request = FakeRequest::default().body("application/json", body.clone());
 
         let model = EscapedBody::parse(&request)
             .unwrap_or_else(|e| panic!("{} failed to parse: {:?}", body, e));
 
-        assert_eq!(model.params_json, expected, "wire form {}", wire);
+        if model.params_json != expected {
+            failures.push(format!(
+                "  wire {} -> {:?}, expected {:?}",
+                wire, model.params_json, expected
+            ));
+        }
     }
+
+    assert!(
+        failures.is_empty(),
+        "{} row(s) did not resolve:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -220,8 +262,15 @@ fn escaped_string_round_trips_through_the_client_writer() {
         r"back\slash",
         "with \"quotes\" inside",
         "line1\nline2",
+        "tab\tafter",
         "\u{1f600} unicode",
+        // Control chars are the writer's only reason to emit the `\u` form, so this is the row
+        // that exercises that branch end to end.
+        "nul\u{0}inside",
+        "ctrl\u{1}\u{1f}end",
         "",
+        // A long value: the de-escaper allocates once up front, so make it re-fill its buffer.
+        &"а\"б\\в\n".repeat(500),
     ] {
         let sent = EscapedBody {
             params_json: original.to_string(),
@@ -229,6 +278,28 @@ fn escaped_string_round_trips_through_the_client_writer() {
 
         let parsed = EscapedBody::parse(&round_trip(sent)).unwrap();
         assert_eq!(parsed.params_json, original);
+    }
+}
+
+/// The other consumer of the fixed helper: an enum sitting DIRECTLY in the body rather than nested
+/// in an object structure. That path runs through `as_string()` -> `as_decoded_string()` and then
+/// `TryFrom<HttpInputValue>`, not through the generated `JsonValueReader`, so it is a separate
+/// half of the fix and needs its own test.
+#[derive(MyHttpInput)]
+struct TopLevelQuotedEnumBody {
+    #[http_body(name = "c", description = "Case")]
+    c: QuotedCase,
+}
+
+#[test]
+fn top_level_enum_with_an_escaped_case_value_round_trips() {
+    for case in [QuotedCase::SaysHi, QuotedCase::BackSlash] {
+        let sent = TopLevelQuotedEnumBody { c: case };
+
+        let parsed = TopLevelQuotedEnumBody::parse(&round_trip(sent))
+            .unwrap_or_else(|e| panic!("{:?} did not survive the round trip: {:?}", case, e));
+
+        assert_eq!(parsed.c, case);
     }
 }
 
