@@ -1,4 +1,3 @@
-use types_reader::rust_extensions::lazy::LazyVec;
 use types_reader::{MacrosAttribute, StructProperty};
 
 use super::InputField;
@@ -18,13 +17,13 @@ pub struct HttpInputProperties<'s> {
 
 impl<'s> HttpInputProperties<'s> {
     pub fn new(props: &'s [StructProperty]) -> Result<Self, syn::Error> {
-        let mut body_fields = LazyVec::with_capacity(props.len());
-        let mut query_string_fields = LazyVec::with_capacity(props.len());
-        let mut header_fields = LazyVec::with_capacity(props.len());
+        let mut body_fields = Vec::with_capacity(props.len());
+        let mut query_string_fields = Vec::with_capacity(props.len());
+        let mut header_fields = Vec::with_capacity(props.len());
 
-        let mut path_fields = LazyVec::with_capacity(props.len());
+        let mut path_fields = Vec::with_capacity(props.len());
 
-        let mut form_data_fields = LazyVec::with_capacity(props.len());
+        let mut form_data_fields = Vec::with_capacity(props.len());
 
         let mut body_raw_field = None;
 
@@ -38,35 +37,35 @@ impl<'s> HttpInputProperties<'s> {
             let attr: Option<HttpQueryAttribute> = struct_property.try_get_attribute()?;
 
             if let Some(attr) = attr {
-                query_string_fields.add(InputField::new(struct_property, attr));
+                query_string_fields.push(InputField::new(struct_property, attr));
                 continue;
             }
 
             let attr: Option<HttpPathAttribute> = struct_property.try_get_attribute()?;
 
             if let Some(attr) = attr {
-                path_fields.add(InputField::new(struct_property, attr));
+                path_fields.push(InputField::new(struct_property, attr));
                 continue;
             }
 
             let attr: Option<HttpHeaderAttribute> = struct_property.try_get_attribute()?;
 
             if let Some(attr) = attr {
-                header_fields.add(InputField::new(struct_property, attr));
+                header_fields.push(InputField::new(struct_property, attr));
                 continue;
             }
 
             let attr: Option<HttpFormDataAttribute> = struct_property.try_get_attribute()?;
 
             if let Some(attr) = attr {
-                form_data_fields.add(InputField::new(struct_property, attr));
+                form_data_fields.push(InputField::new(struct_property, attr));
                 continue;
             }
 
             let attr: Option<HttpBodyAttribute> = struct_property.try_get_attribute()?;
 
             if let Some(attr) = attr {
-                body_fields.add(InputField::new(struct_property, attr));
+                body_fields.push(InputField::new(struct_property, attr));
                 continue;
             }
 
@@ -97,13 +96,13 @@ impl<'s> HttpInputProperties<'s> {
         }
 
         let result = Self {
-            body_fields: body_fields.get_result(),
-            header_fields: header_fields.get_result(),
-            query_string_fields: query_string_fields.get_result(),
-            path_fields: path_fields.get_result(),
+            body_fields: into_option(body_fields),
+            header_fields: into_option(header_fields),
+            query_string_fields: into_option(query_string_fields),
+            path_fields: into_option(path_fields),
             body_raw_field,
             body_as_stream_field,
-            form_data_fields: form_data_fields.get_result(),
+            form_data_fields: into_option(form_data_fields),
         };
 
         result.self_check()?;
@@ -236,6 +235,16 @@ impl<'s> HttpInputProperties<'s> {
         }
 
         result
+    }
+}
+
+/// The codegen keys off "does this model have fields of that kind at all", so each group is an
+/// `Option<Vec<_>>` rather than a possibly empty `Vec` - an empty group collapses to `None`.
+fn into_option<T>(items: Vec<T>) -> Option<Vec<T>> {
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
     }
 }
 
