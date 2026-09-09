@@ -5,6 +5,8 @@
 mod body_stream_tests;
 #[cfg(test)]
 mod parse_tests;
+#[cfg(test)]
+mod nested_array_tests;
 
 #[cfg(test)]
 mod tests {

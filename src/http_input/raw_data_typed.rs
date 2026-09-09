@@ -80,4 +80,12 @@ impl<T: DeserializeOwned + crate::schema::data_types::DataTypeProvider>
     fn get_data_type() -> crate::schema::data_types::HttpDataType {
         T::get_data_type()
     }
+
+    /// Forwarded too, so a `RawDataTyped<Vec<Vec<..>>>` keeps naming the declaring field if the
+    /// inner model has no schema representation.
+    fn get_data_type_in_field(
+        ctx: crate::schema::data_types::SchemaFieldCtx,
+    ) -> crate::schema::data_types::HttpDataType {
+        T::get_data_type_in_field(ctx)
+    }
 }

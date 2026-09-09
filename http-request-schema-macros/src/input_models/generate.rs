@@ -19,7 +19,7 @@ pub fn generate(ast: &syn::DeriveInput, debug: &mut bool) -> Result<TokenStream,
 
     let http_input_param = crate::consts::get_http_input_parameter_with_ns();
 
-    let http_input = match super::docs::generate_http_input(&input_fields) {
+    let http_input = match super::docs::generate_http_input(struct_name, &input_fields) {
         Ok(result) => result,
         Err(err) => err.to_compile_error(),
     };

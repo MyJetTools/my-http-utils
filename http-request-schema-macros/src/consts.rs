@@ -25,3 +25,11 @@ pub fn get_http_input_parameter_with_ns() -> TokenStream {
 pub fn get_http_parameter_input_src() -> TokenStream {
     quote!(in_parameters::HttpParameterInputSource)
 }
+
+pub fn get_data_type_provider_with_ns() -> TokenStream {
+    quote!(my_http_utils::schema::data_types::DataTypeProvider)
+}
+
+pub fn get_schema_field_ctx_with_ns() -> TokenStream {
+    quote!(my_http_utils::schema::data_types::SchemaFieldCtx)
+}

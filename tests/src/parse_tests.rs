@@ -7,8 +7,10 @@ use my_http_utils::macros::*;
 
 // ---- in-memory THttpRequest -------------------------------------------------
 
+/// `pub(crate)` so the other test modules can drive `parse` through the same in-memory request
+/// rather than each growing its own copy of it.
 #[derive(Default)]
-struct FakeRequest {
+pub(crate) struct FakeRequest {
     query: String,
     headers: Vec<(String, String)>,
     path: Vec<(String, String)>,
@@ -17,19 +19,22 @@ struct FakeRequest {
 }
 
 impl FakeRequest {
-    fn query(mut self, q: &str) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn query(mut self, q: &str) -> Self {
         self.query = q.to_string();
         self
     }
-    fn header(mut self, k: &str, v: &str) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn header(mut self, k: &str, v: &str) -> Self {
         self.headers.push((k.to_string(), v.to_string()));
         self
     }
-    fn path(mut self, k: &str, v: &str) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn path(mut self, k: &str, v: &str) -> Self {
         self.path.push((k.to_string(), v.to_string()));
         self
     }
-    fn body(mut self, content_type: &str, body: impl Into<Vec<u8>>) -> Self {
+    pub(crate) fn body(mut self, content_type: &str, body: impl Into<Vec<u8>>) -> Self {
         self.content_type = Some(content_type.to_string());
         self.body = body.into();
         self
