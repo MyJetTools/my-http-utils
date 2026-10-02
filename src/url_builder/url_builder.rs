@@ -20,28 +20,11 @@ impl UrlBuilder {
             return Self::UnixSocketBased(UrlBuilderUnixSocket::new(host_port));
         }
 
-        let host_index = host_port.find(':');
-
-        if host_index.is_none() {
-            return Self::TcpBased(UrlBuilderInner::new(host_port));
+        if UrlBuilderUnixSocket::has_scheme(host_port) {
+            return Self::UnixSocketBased(UrlBuilderUnixSocket::new(host_port));
         }
 
-        let host_index = host_index.unwrap();
-
-        let scheme_str = &host_port[..host_index];
-
-        let scheme = Scheme::try_parse(scheme_str);
-
-        match scheme {
-            Some(scheme) => {
-                if scheme.is_unix_socket() {
-                    return Self::UnixSocketBased(UrlBuilderUnixSocket::new(host_port));
-                }
-
-                Self::TcpBased(UrlBuilderInner::new(host_port))
-            }
-            None => Self::TcpBased(UrlBuilderInner::new(host_port)),
-        }
+        Self::TcpBased(UrlBuilderInner::new(host_port))
     }
 
     pub fn get_remote_endpoint<'s>(&'s self, default_port: Option<u16>) -> RemoteEndpoint<'s> {

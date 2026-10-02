@@ -1,27 +1,33 @@
-use rust_extensions::remote_endpoint::RemoteEndpoint;
+use rust_extensions::remote_endpoint::{RemoteEndpoint, Scheme};
 
 pub struct UrlBuilderUnixSocket {
-    has_scheme: bool,
+    // The scheme and the slashes after it, as written — everything before the socket
+    // path. Empty for a bare path.
+    scheme: String,
     host: String,
     path: String,
     query: String,
 }
 
 impl UrlBuilderUnixSocket {
+    /// `true` when `src` starts with a unix socket scheme — any spelling
+    /// `Scheme::try_parse` takes for one, in any case — followed by a '/'. Without the
+    /// slash it is a host that happens to be named like the scheme: `unix:8080`.
+    pub(super) fn has_scheme(src: &str) -> bool {
+        socket_path_index(src).is_some()
+    }
+
     pub fn new(host_port: &str) -> Self {
-        let mut has_scheme = false;
-        let host_port = if let Some(rest) = host_port.strip_prefix("http+unix:/") {
-            has_scheme = true;
-            rest
-        } else {
-            host_port
+        let (scheme, host_port) = match socket_path_index(host_port) {
+            Some(index) => host_port.split_at(index),
+            None => ("", host_port),
         };
 
         let index = host_port.find(':');
 
         let Some(index) = index else {
             return Self {
-                has_scheme,
+                scheme: scheme.to_string(),
                 host: host_port.to_string(),
                 path: Default::default(),
                 query: Default::default(),
@@ -42,7 +48,7 @@ impl UrlBuilderUnixSocket {
         };
 
         Self {
-            has_scheme,
+            scheme: scheme.to_string(),
             host,
             path,
             query,
@@ -134,12 +140,38 @@ impl UrlBuilderUnixSocket {
 
 }
 
+/// Where the socket path starts in an address with a unix socket scheme, `None` when
+/// `src` has no such scheme.
+///
+/// Any number of slashes may follow the scheme, and the path keeps exactly one of
+/// them: `unix:/run/x.sock`, `unix://run/x.sock` and `unix:///run/x.sock` all name
+/// `/run/x.sock`, the same as rust-extensions reads them. A path in the home
+/// directory keeps none: `http+unix:/~/x.sock` names `~/x.sock`.
+fn socket_path_index(src: &str) -> Option<usize> {
+    let colon = src.find(':')?;
+
+    if !Scheme::try_parse(&src[..colon])?.is_unix_socket() {
+        return None;
+    }
+
+    let slashes = src[colon + 1..].bytes().take_while(|b| *b == b'/').count();
+
+    if slashes == 0 {
+        return None;
+    }
+
+    let after_slashes = colon + 1 + slashes;
+
+    if src[after_slashes..].starts_with('~') {
+        Some(after_slashes)
+    } else {
+        Some(after_slashes - 1)
+    }
+}
+
 impl std::fmt::Display for UrlBuilderUnixSocket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.has_scheme {
-            f.write_str("http+unix:/")?;
-        }
-
+        f.write_str(&self.scheme)?;
         f.write_str(&self.host)?;
 
         // The ':' is the host/path separator; omit it for a host-only URL so it
