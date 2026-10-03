@@ -20,7 +20,7 @@ server = []
 # codegen (request parsing, controllers, `http_route`) lives in my-http-server.
 
 [dependencies]
-syn = { version = "*", features = ["extra-traits"] }
+syn = { version = "3", features = ["extra-traits"] }
 quote = "*"
 types-reader = { tag = "0.5.1", git = "https://github.com/MyJetTools/types-reader.git" }
 
