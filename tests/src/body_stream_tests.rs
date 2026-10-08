@@ -98,6 +98,7 @@ pub struct NoBodyHttpInput {
 fn streaming_model_reports_streams_body_and_not_reads_body() {
     const { assert!(UploadHttpInput::STREAMS_BODY) };
     const { assert!(!UploadHttpInput::READS_BODY) };
+    const { assert!(!UploadHttpInput::READS_BODY_RAW) };
 }
 
 #[test]

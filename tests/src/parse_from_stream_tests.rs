@@ -432,6 +432,9 @@ async fn an_optional_raw_member_is_kept_verbatim() {
 
     // Byte for byte — no key reordering, no whitespace dropped
     assert_eq!(model.cfg.as_deref(), Some(r#"{"b":1, "a":2}"#));
+
+    // A raw body all the same, though it is read by name
+    const { assert!(OptionalRawMemberInput::READS_BODY_RAW) };
 }
 
 #[tokio::test]

@@ -143,6 +143,8 @@ fn all_sources_parse_ok() {
 
     // READS_BODY reflects the http_body field.
     const { assert!(AllSources::READS_BODY) };
+    // ...which is named fields, not a raw body.
+    const { assert!(!AllSources::READS_BODY_RAW) };
 }
 
 #[test]
@@ -366,6 +368,7 @@ fn raw_body_as_string() {
     let model = RawStringModel::parse(&request).unwrap();
     assert_eq!(model.body, "hello raw");
     const { assert!(RawStringModel::READS_BODY) };
+    const { assert!(RawStringModel::READS_BODY_RAW) };
 }
 
 // ---- error cases ------------------------------------------------------------
@@ -456,6 +459,7 @@ fn missing_required_path() {
 #[test]
 fn reads_body_false_for_query_only_model() {
     const { assert!(!RequiredQuery::READS_BODY) };
+    const { assert!(!RequiredQuery::READS_BODY_RAW) };
 }
 
 // ---- regressions from the adversarial review -------------------------------

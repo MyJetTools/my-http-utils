@@ -73,6 +73,11 @@ pub fn generate_parse(
 
     let streams_body = props.body_as_stream_field.is_some();
 
+    // READS_BODY_RAW narrows READS_BODY down to `#[http_body_raw]` — a body taken as it is rather
+    // than read field by field. The server reads every other body through
+    // `parse_with_body_stream`, and this one materialised, as `parse` reads it.
+    let reads_body_raw = props.body_raw_field.is_some();
+
     // The parsing `BodyReader` (content-type dispatch) is only needed for reading NAMED body
     // fields — json / form-data, or an Option `#[http_body_raw]` (which reads a named field).
     // A non-Option `#[http_body_raw]` takes the whole body verbatim via `read_raw_body` and must
@@ -204,6 +209,11 @@ pub fn generate_parse(
             /// materialised and streamed. Emitted for **every** model (`false` for the rest), so
             /// the server codegen that reads it always compiles.
             pub const STREAMS_BODY: bool = #streams_body;
+
+            /// `true` when this model has a `#[http_body_raw]` field — the body is read for what
+            /// it is, not for named fields. Implies [`Self::READS_BODY`]. Emitted for **every**
+            /// model (`false` for the rest), like [`Self::STREAMS_BODY`].
+            pub const READS_BODY_RAW: bool = #reads_body_raw;
 
             /// Parses the model out of an abstract [`my_http_utils::http_input::core::THttpRequest`].
             /// Synchronous: the body is expected to be already received (see [`Self::READS_BODY`]).

@@ -25,9 +25,9 @@ the body-stream channel), so models compile to `wasm32-unknown-unknown`.
   / `DataTypeProvider`, the `schema::{data_types, in_parameters, out_results}` modules,
   `MyHttpObjectStructure` / `MyHttpInputObjectStructure`), the
   [`http_input`](#server-side-parsing-server-feature) **parse engine**, and the derive-generated
-  **`parse`** / **`parse_with_body_stream`** / `READS_BODY` / `STREAMS_BODY`. All of it is a server
-  concern; all of it is still wasm-safe, just not compiled into clients that don't ask for it. It
-  adds **no** dependency of its own.
+  **`parse`** / **`parse_with_body_stream`** / `READS_BODY` / `STREAMS_BODY` / `READS_BODY_RAW`.
+  All of it is a server concern; all of it is still wasm-safe, just not compiled into clients that
+  don't ask for it. It adds **no** dependency of its own.
 
   Note the `http_input` **field types** (`RawData`, `RawDataTyped<T>`, `FileContent`,
   `HttpBodyAsStream`, `HttpParseError`, `PasswordHttpInputField`) are **not** gated — a model
@@ -267,6 +267,11 @@ impl Model {
     /// exclusive with READS_BODY — a body is either materialised or streamed, never both.
     /// Emitted for every model, so a server that reads it needs no per-model knowledge.
     pub const STREAMS_BODY: bool;
+
+    /// `true` when the model has a `#[http_body_raw]` field (`Option` or not) — the body is read
+    /// for what it is, not for named fields. Implies READS_BODY. Emitted for every model, like
+    /// STREAMS_BODY.
+    pub const READS_BODY_RAW: bool;
 
     /// Synchronous — the server reads the body first (if READS_BODY) and exposes it via the trait.
     pub fn parse(request: &impl my_http_utils::http_input::core::THttpRequest)
