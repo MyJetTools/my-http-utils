@@ -124,7 +124,7 @@ mod tests {
             112, 108, 97, 105, 110, 13, 10, 13, 10, 49, 50, 51, 13, 10,
         ];
 
-        assert_eq!(result.get(0).unwrap(), &expected_payload_0);
+        assert_eq!(result.first().unwrap(), &expected_payload_0);
         assert_eq!(result.get(1).unwrap(), &expected_payload_1);
         assert_eq!(result.get(2).unwrap(), &expected_payload_2);
     }
@@ -139,7 +139,7 @@ mod tests {
 
         assert_eq!(result.len(), 2);
 
-        let item: FormDataItem<'_> = FormDataItem::try_parse(result.get(0).unwrap()).unwrap();
+        let item: FormDataItem<'_> = FormDataItem::try_parse(result.first().unwrap()).unwrap();
 
         assert_eq!(item.get_name(), "IsLocked");
         assert_eq!(item.unwrap_as_string().unwrap(), "true");

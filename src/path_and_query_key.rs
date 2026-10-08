@@ -97,7 +97,7 @@ mod test {
         assert_eq!(path1.as_str(), path2.as_str());
         assert_eq!(path1.as_str(), "/path/to/Some/where?age=20&name=John");
 
-        assert_eq!(path1.has_query(), true);
+        assert!(path1.has_query());
     }
 
     #[test]
@@ -109,7 +109,7 @@ mod test {
         assert_eq!(path1.as_str(), path2.as_str());
         assert_eq!(path1.as_str(), "/path/to/Some/where");
 
-        assert_eq!(path1.has_query(), false);
+        assert!(!path1.has_query());
     }
 
     #[test]
@@ -123,7 +123,7 @@ mod test {
         assert_eq!(path1.as_str(), path2.as_str());
         assert_eq!(path1.as_str(), "/path/to/Some/where?age=20&married&name=John");
 
-        assert_eq!(path1.has_query(), true);
+        assert!(path1.has_query());
     }
 
     #[test]

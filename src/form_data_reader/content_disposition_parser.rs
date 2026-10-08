@@ -106,7 +106,7 @@ mod tests {
         let result = ContentDispositionParser::new(&src).collect::<Vec<_>>();
 
         {
-            let first_item = result.get(0).unwrap();
+            let first_item = result.first().unwrap();
             assert_eq!(first_item.key, "form-data");
             assert_eq!(first_item.value, None);
         }
@@ -131,7 +131,7 @@ mod tests {
         let result = ContentDispositionParser::new(&src).collect::<Vec<_>>();
 
         {
-            let first_item = result.get(0).unwrap();
+            let first_item = result.first().unwrap();
             assert_eq!(first_item.key, "form-data");
             assert_eq!(first_item.value, None);
         }

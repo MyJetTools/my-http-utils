@@ -21,3 +21,6 @@ rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-ext
 # production — spawning a pump that fills the sending half of the channel. The library itself
 # still uses nothing but `tokio/sync`.
 tokio = { version = "*", features = ["rt", "macros", "time"] }
+# The streamed-parse tests hand bodies in as a `rust_extensions::AsyncBytesStream` of their own —
+# an `#[async_trait]` trait, so implementing it needs the macro.
+async-trait = "*"

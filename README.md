@@ -25,9 +25,9 @@ the body-stream channel), so models compile to `wasm32-unknown-unknown`.
   / `DataTypeProvider`, the `schema::{data_types, in_parameters, out_results}` modules,
   `MyHttpObjectStructure` / `MyHttpInputObjectStructure`), the
   [`http_input`](#server-side-parsing-server-feature) **parse engine**, and the derive-generated
-  **`parse`** / `READS_BODY` / `STREAMS_BODY`. All of it is a server concern; all of it is still
-  wasm-safe, just not compiled into clients that don't ask for it. It adds **no** dependency of its
-  own.
+  **`parse`** / **`parse_with_body_stream`** / `READS_BODY` / `STREAMS_BODY`. All of it is a server
+  concern; all of it is still wasm-safe, just not compiled into clients that don't ask for it. It
+  adds **no** dependency of its own.
 
   Note the `http_input` **field types** (`RawData`, `RawDataTyped<T>`, `FileContent`,
   `HttpBodyAsStream`, `HttpParseError`, `PasswordHttpInputField`) are **not** gated — a model
@@ -39,6 +39,13 @@ channel behind [`HttpBodyAsStream`](#streaming-the-request-body). It is not feat
 the same channel streams an **incoming** body on the server and an **outgoing** one on the client.
 No runtime, no mio, no transport, and still no hyper — `tokio/sync` is platform-independent and
 compiles for wasm.
+
+**A body is a stream of bytes.** Wherever a body comes or goes in chunks it is a
+`rust_extensions::AsyncBytesStream` (re-exported as `my_http_utils::rust_extensions`, so callers
+use the very version this crate is built on): `parse_with_body_stream` takes the incoming body as
+one, `HttpBodyAsStream::from_bytes_stream` makes a streamed field out of one, and `HttpBodyReader`
+is one — so a body read with fl-url / my-http-client, an incoming body, and my-json's streaming
+readers all plug into each other without copying the body into a `Vec` first.
 
 ## Main types
 
@@ -264,7 +271,49 @@ impl Model {
     /// Synchronous — the server reads the body first (if READS_BODY) and exposes it via the trait.
     pub fn parse(request: &impl my_http_utils::http_input::core::THttpRequest)
         -> Result<Self, my_http_utils::http_input::HttpParseError>;
+
+    /// The same parse, with the body handed in as a stream instead of received up front — see
+    /// "Parsing a body that comes as a stream" below.
+    pub async fn parse_with_body_stream<TStream, TError>(
+        request: &impl my_http_utils::http_input::core::THttpRequest,
+        body: TStream,
+    ) -> Result<Self, my_http_utils::http_input::HttpParseError>
+    where
+        TStream: my_http_utils::rust_extensions::AsyncBytesStream<TError> + Send + Sync + 'static,
+        TError: Into<my_http_utils::http_input::HttpParseError> + 'static;
 }
+```
+
+#### Parsing a body that comes as a stream
+
+`parse_with_body_stream` is what a server calls when it has the body as a
+`rust_extensions::AsyncBytesStream` rather than in memory — it never asks for the body to be put
+together first. The request's `get_body` / `take_body_stream` are not called; path, headers and
+query are read through `THttpRequest` exactly as in `parse`, and **before** the body, so a request
+that fails on them does not wait for its body. What happens to the stream depends on the model:
+
+| the model reads | the stream |
+|---|---|
+| named fields (`#[http_body]`, `#[http_form_data]`, an `Option` `#[http_body_raw]`) out of a **JSON** body | read member by member as it arrives (my-json's `JsonFirstLineIteratorAsync`). Only the members the model names are kept, verbatim; the rest pass through and are let go, and once every named member is read the rest of the body is not read at all |
+| the same out of any other body (`x-www-form-urlencoded`, `multipart/form-data`, no `Content-Type`) | read to its end and parsed exactly as `parse` parses a whole body — those formats are only readable whole |
+| the whole body (non-`Option` `#[http_body_raw]`) | read to its end, verbatim |
+| the body as a stream (`#[http_body_as_stream]`) | goes into the field **unread**, via `HttpBodyAsStream::from_bytes_stream` — no channel, no pump |
+| nothing from the body | dropped unread |
+
+A field reads the same value either way: the members kept of a JSON body are read by the very
+`BodyReader` (and `my_json::j_path::get_value`) a whole body is — the same first-occurrence rule
+for a repeated key, the same escape-resolved key match, the same `null`-is-absent. The one
+difference is a **malformed** JSON body: a stream is scanned as it arrives, so it fails as
+`InvalidBodyFormat` as soon as the broken part comes in, where the lazy whole-body reader would
+report a field it could not find in it as missing.
+
+The stream's own error becomes an `HttpParseError` through `TError: Into<HttpParseError>` — a
+stream that fails with `HttpParseError` needs nothing, a transport error type adds a `From` impl.
+The future is `Send` whenever the request and the stream are, so it can run in a spawned task.
+
+```rust
+// my-http-server: the body as it comes off the connection
+let model = UploadOrderHttpInput::parse_with_body_stream(&request, incoming_body).await?;
 ```
 
 The signature is **the same for every model**, so a caller that only knows the type name can call
@@ -297,6 +346,7 @@ get a `TryFrom<HttpInputValue>` so they parse too.
 | type | what it's for |
 |---|---|
 | `http_input::core::THttpRequest` | the one trait the server (or a test) implements |
+| `http_input::core::BodyFromStream` | the body half of `parse_with_body_stream`: receives what the model reads out of an `AsyncBytesStream` and hands it to the same `BodyReader` a whole body goes through |
 | `http_input::HttpInputValue` | a single read value, before conversion to a field's type |
 | `http_input::HttpParseError` | parse failure: `RequiredParameterIsMissing{name,src}`, `CanNotParseValue{name,src,value}`, `UrlDecodeError`, `InvalidBodyFormat`, `NotSupportedContentType`, `Forbidden`, `Validation`, `BodyStream` |
 | `http_input::{RawData, RawDataTyped<T>, FileContent}` | body/file field types: verbatim bytes / verbatim bytes the handler turns into `T` on demand via `RawDataTyped::deserialize_json` / an uploaded `multipart/form-data` file |
@@ -328,8 +378,10 @@ through `f64`) and a `RawData` / `RawDataTyped` field gets the member's original
   `parse`. An **Option** `#[http_body_raw]` reads a *named* body field instead.
 - `#[http_body_as_stream]` — never `Option` (a compile error). `parse` reads nothing: it moves the
   already-live `HttpBodyAsStream` out of `THttpRequest::take_body_stream()` into the field, and
-  fails with `HttpParseError::BodyStream` if the implementation has none to give. The *client* half
-  of the same field is in [Streaming the request body](#streaming-the-request-body).
+  fails with `HttpParseError::BodyStream` if the implementation has none to give.
+  `parse_with_body_stream` reads nothing either: the stream it is given goes into the field
+  as it is (`HttpBodyAsStream::from_bytes_stream`). The *client* half of the same field is in
+  [Streaming the request body](#streaming-the-request-body).
 - `trim` / `to_lowercase` / `to_uppercase` apply to `String` fields after reading.
 
 **Validators.** `validator = "fn"` uses the **same** contract as the client builder —
@@ -521,15 +573,54 @@ it (or check `is_stream()`) before calling `into_vec()`, which returns an empty 
 
 | type | who holds it |
 |---|---|
-| `HttpBodyAsStream` | the model field. `create(buffer, content_length)` makes the pair; `empty()` is "nothing to stream" |
+| `HttpBodyAsStream` | the model field. `create(buffer, content_length)` makes the pair; `from_bytes_stream(stream)` wraps a stream that is already there; `empty()` is "nothing to stream" |
 | `HttpBodyStreamSender` | whoever produces the bytes: `send_chunk` / `send_error` / `closed` / `finish` |
 | `HttpBodyReader` | whoever consumes them, via `get_body_reader()` — **once**; there is exactly one receiver, and a second call is an `Err` |
 
-**Reading the chunks.** `get_next_chunk()` and `read_to_end(max_size)` take `&self` (the receiver
+**A stream that is already there needs no channel.** When the bytes already come as a
+`rust_extensions::AsyncBytesStream` — an incoming body the server wraps, a response body read through
+fl-url / my-http-client that is proxied on as a request body, a file — `HttpBodyAsStream::from_bytes_stream`
+puts it into the field as it is. There is nothing to spawn: the reader reads the stream itself, a
+chunk when asked for one, so the back pressure is the stream's own. The length is the stream's
+`get_size()`, and its end is the stream's to say — `Ok(None)` out of it is the end of the body, so a
+body cut short must come out of it as an error (its error becomes an `HttpParseError` via `Into`).
+Each chunk is copied out and let go at once, as `AsyncBytesStream` asks of its readers. This is what
+`parse_with_body_stream` puts into a `#[http_body_as_stream]` field.
+
+```rust
+// `body_stream`: any `AsyncBytesStream<TError>` with `TError: Into<HttpParseError>`
+let model = UploadHttpInput {
+    file_name: "report.bin".into(),
+    body: HttpBodyAsStream::from_bytes_stream(body_stream),
+};
+```
+
+fl-url's `FlUrlBodyReader` (from `response.get_body()`) is such a stream once its error converts —
+a `From<FlUrlError> for HttpParseError` in fl-url; then a response body proxies on as the body of
+the next request with nothing in between.
+
+**Reading the chunks.** `get_next_chunk()` and `read_to_end(max_size)` take `&self` (the source
 sits behind a `tokio::sync::Mutex`), so the reader can be put into an `Arc` and read from several
 places. A transport that is itself a `Future` / `Body` — fl-url's `hyper::body::Body::poll_frame` —
 uses `poll_next_chunk(&mut self, cx)` instead: `&mut self` reaches the mutex through `get_mut()`,
-so there is no lock and no boxed future.
+so there is no lock. Both read a body the same way, and both are cancel-safe: a read given up
+half-way is picked up by the next call, no chunk is lost.
+
+**The reader is an `AsyncBytesStream` itself** (`Chunk = Vec<u8>`), so whatever reads a stream of
+bytes reads the body — e.g. my-json's `JsonArrayIteratorAsync` taking a huge uploaded JSON array
+apart item by item as it arrives:
+
+```rust
+let reader = input_data.body.get_body_reader()?;
+let mut items = my_http_utils::my_json::json_reader::JsonArrayIteratorAsync::new(reader);
+
+while let Some(item) = items.get_next().await {
+    let item = item?; // a JsonValueRef into the reader's buffer
+}
+```
+
+Its `into_vec()` is `read_to_end(None)` — no limit, and no allocation of the announced size up
+front; where the source is not trusted, call `read_to_end` with a limit.
 
 **Back pressure is the point.** The channel is *bounded* (`BODY_STREAM_DEFAULT_BUFFER` = 4 by
 default), so memory per request is capped at roughly `buffer × chunk_size`. A producer that runs
@@ -569,5 +660,6 @@ client-side streaming path (`create` → model → `get_body()` → `HttpRequest
 is covered by unit tests inside `src/http_input/body_as_stream.rs`, which a bare `cargo test` runs
 with no features — exactly what a wasm client compiles.
 That crate always enables `server`, and exercises the client request builder, the derive-generated
-`parse` end to end, and the body-stream channel (`tests/src/parse_tests.rs`,
-`tests/src/body_stream_tests.rs`, `tests/src/lib.rs`).
+`parse` end to end, `parse_with_body_stream` against `parse` over the same bodies cut into chunks
+of every size, and the body-stream channel (`tests/src/parse_tests.rs`,
+`tests/src/parse_from_stream_tests.rs`, `tests/src/body_stream_tests.rs`, `tests/src/lib.rs`).

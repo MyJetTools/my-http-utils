@@ -92,21 +92,23 @@ pub struct NoBodyHttpInput {
 
 // ---- 1. markup and the generated consts -------------------------------------
 
+// The flags are consts, so they are checked while the tests compile.
+
 #[test]
 fn streaming_model_reports_streams_body_and_not_reads_body() {
-    assert!(UploadHttpInput::STREAMS_BODY);
-    assert!(!UploadHttpInput::READS_BODY);
+    const { assert!(UploadHttpInput::STREAMS_BODY) };
+    const { assert!(!UploadHttpInput::READS_BODY) };
 }
 
 #[test]
 fn non_streaming_models_report_streams_body_false() {
     // STREAMS_BODY is emitted for every model, so the server codegen that reads it compiles
     // regardless of the model's shape — and READS_BODY is unchanged for the existing kinds.
-    assert!(!PlainBodyHttpInput::STREAMS_BODY);
-    assert!(PlainBodyHttpInput::READS_BODY);
+    const { assert!(!PlainBodyHttpInput::STREAMS_BODY) };
+    const { assert!(PlainBodyHttpInput::READS_BODY) };
 
-    assert!(!NoBodyHttpInput::STREAMS_BODY);
-    assert!(!NoBodyHttpInput::READS_BODY);
+    const { assert!(!NoBodyHttpInput::STREAMS_BODY) };
+    const { assert!(!NoBodyHttpInput::READS_BODY) };
 }
 
 #[test]

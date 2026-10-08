@@ -151,7 +151,8 @@ impl<'s> HttpInputValue<'s> {
         }
     }
 
-    /// Reads a **nested object** into `T` through `my-json`'s [`JsonValueReader`] — the read half
+    /// Reads a **nested object** into `T` through `my-json`'s
+    /// [`JsonValueReader`](my_json::json_reader::JsonValueReader) — the read half
     /// of the very contract the client's `JsonValueWriter` writes. An object structure's generated
     /// `TryFrom<HttpInputValue>` calls this, so both halves come from the same field metadata and
     /// serde is not involved (which is what used to make `rename_all`, a nested `DateTime` and a

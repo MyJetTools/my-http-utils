@@ -38,6 +38,12 @@ pub use my_json;
 /// `my_http_utils::serde::…` so a model crate needs no direct `serde` dependency of its own.
 pub use serde;
 
+/// Re-exported for the same reason as [`my_json`]: a body that comes as a stream is a
+/// `rust_extensions::AsyncBytesStream` — the derive-generated `parse_with_body_stream` names it
+/// through `my_http_utils::rust_extensions::…`, and whoever hands a stream in gets the very version
+/// of the trait this crate is built on.
+pub use rust_extensions;
+
 // Server-independent HTTP request parsing: the field types a model names, plus (behind the
 // `server` feature) the parse engine the derive-generated `parse` targets. Always compiled — a
 // model shared between a client and a server names those field types, so it must also compile for

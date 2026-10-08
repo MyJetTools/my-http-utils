@@ -1,8 +1,14 @@
 //! Generates the server-independent sync `parse` (and the `READS_BODY` const) on a `MyHttpInput`
-//! model. Only built with the `server` feature. Semantics mirror the old server-side
-//! `parse_http_input` codegen (`my-http-server-macros`) 1:1, but every source is read through the
-//! abstract [`my_http_utils::http_input::core::THttpRequest`], and values convert via
-//! `HttpInputValue::try_into` instead of `EncodedParamValue`.
+//! model, plus its async twin `parse_with_body_stream`, which reads the body out of a
+//! `rust_extensions::AsyncBytesStream` instead. Only built with the `server` feature. Semantics
+//! mirror the old server-side `parse_http_input` codegen (`my-http-server-macros`) 1:1, but every
+//! source is read through the abstract [`my_http_utils::http_input::core::THttpRequest`], and
+//! values convert via `HttpInputValue::try_into` instead of `EncodedParamValue`.
+//!
+//! The two share everything but the body: path / header / query reads, the body field reads off
+//! `__body`, the validators and the struct literal are the same tokens. Only where `__body` comes
+//! from, and how a whole-body (`#[http_body_raw]`) or streamed (`#[http_body_as_stream]`) field is
+//! filled, differ.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -80,14 +86,10 @@ pub fn generate_parse(
     let needs_body_reader =
         props.body_fields.is_some() || props.form_data_fields.is_some() || body_raw_is_option;
 
-    if needs_body_reader {
-        reads.push(quote! {
-            let __body = my_http_utils::http_input::core::BodyReader::from_parts(
-                request.get_body(),
-                request.get_content_type(),
-            )?;
-        });
-    }
+    // Read off `__body` by both `parse` and `parse_with_body_stream`.
+    let mut body_reads = Vec::new();
+    // The names they are read by — what a body that comes as a stream keeps of itself.
+    let mut body_names = Vec::new();
 
     if let Some(body_fields) = &props.body_fields {
         for field in body_fields {
@@ -95,7 +97,8 @@ pub fn generate_parse(
             if let Some(validator) = field.get_validator_as_token_stream() {
                 validations.push(validator);
             }
-            reads.push(read_body(field)?);
+            body_names.push(field.get_input_field_name()?);
+            body_reads.push(read_body(field)?);
         }
     }
 
@@ -105,27 +108,89 @@ pub fn generate_parse(
             if let Some(validator) = field.get_validator_as_token_stream() {
                 validations.push(validator);
             }
-            reads.push(read_body(field)?);
+            body_names.push(field.get_input_field_name()?);
+            body_reads.push(read_body(field)?);
         }
     }
+
+    // Where `__body` comes from, and the body-taking field of the struct literal: the request's
+    // own body for `parse`, the stream for `parse_with_body_stream`.
+    let mut sync_body = Vec::new();
+    let mut stream_body = Vec::new();
+    let mut sync_body_field = None;
+    let mut stream_body_field = None;
 
     // Raw body reads inline into the struct literal (no local, no transformation) — matching the
     // original codegen.
     if let Some(raw_field) = &props.body_raw_field {
-        fields_to_return.push(read_body_raw(raw_field)?);
+        let ident = raw_field.property.get_field_name_ident();
+
+        if raw_field.property.ty.is_option() {
+            body_names.push(raw_field.get_input_field_name()?);
+            let field = read_body_raw_optional(raw_field)?;
+            sync_body_field = Some(field.clone());
+            stream_body_field = Some(field);
+        } else {
+            // Non-Option: the whole body, verbatim (no content-type parsing). The field type
+            // builds itself from those bytes via the crate-local `FromRawBody` — `Vec<u8>` = the
+            // bytes as-is, `RawData` / `RawDataTyped` = verbatim (the JSON error, if any, is
+            // deferred to `RawDataTyped::deserialize_json`), `String` = a utf-8 check. `FromRawBody`
+            // (not `TryFrom<Vec<u8>>`) keeps std's `From` free for the client-side `From<T>` on
+            // `RawDataTyped<T>`. Byte source, so a raw body is never mis-routed via JSON.
+            sync_body_field = Some(quote! {
+                #ident: my_http_utils::http_input::core::FromRawBody::from_raw_body(
+                    my_http_utils::http_input::core::read_raw_body(request)
+                )?
+            });
+            stream_body_field = Some(quote! {
+                #ident: my_http_utils::http_input::core::FromRawBody::from_raw_body(
+                    my_http_utils::http_input::core::read_raw_body_from_stream(body).await?
+                )?
+            });
+        }
     }
 
-    // The stream is created and already being filled by the transport BEFORE `parse` runs, so
-    // `parse` only moves the ready `HttpBodyAsStream` into the field — inline into the struct
-    // literal, like `read_body_raw`. No `BodyReader` is built for such a model.
+    if needs_body_reader {
+        sync_body.push(quote! {
+            let __body = my_http_utils::http_input::core::BodyReader::from_parts(
+                request.get_body(),
+                request.get_content_type(),
+            )?;
+        });
+        stream_body.push(quote! {
+            let __body_from_stream = my_http_utils::http_input::core::BodyFromStream::read(
+                body,
+                request.get_content_type(),
+                &[#(#body_names),*],
+            )
+            .await?;
+            let __body = __body_from_stream.get_body_reader()?;
+        });
+    }
+
+    // `parse`: the stream is created and already being filled by the transport BEFORE `parse`
+    // runs, so `parse` only moves the ready `HttpBodyAsStream` into the field.
+    // `parse_with_body_stream`: the stream itself goes into the field — nothing is read out of it.
+    // Either way inline into the struct literal, like the raw body, and no `BodyReader` is built.
     if let Some(stream_field) = &props.body_as_stream_field {
         let ident = stream_field.property.get_field_name_ident();
-        fields_to_return.push(quote! {
+        sync_body_field = Some(quote! {
             #ident: request.take_body_stream().ok_or_else(||
                 my_http_utils::http_input::HttpParseError::BodyStream(
                     "Body stream is not available".to_string()))?
         });
+        stream_body_field = Some(quote! {
+            #ident: my_http_utils::http_input::HttpBodyAsStream::from_bytes_stream(body)
+        });
     }
+
+    if !reads_body && !streams_body {
+        // The model takes nothing from the body, so the stream is let go unread.
+        stream_body.push(quote!(drop(body);));
+    }
+
+    let sync_body_field = sync_body_field.into_iter();
+    let stream_body_field = stream_body_field.into_iter();
 
     Ok(quote! {
         impl #name {
@@ -146,8 +211,40 @@ pub fn generate_parse(
                 request: &impl my_http_utils::http_input::core::THttpRequest,
             ) -> Result<Self, my_http_utils::http_input::HttpParseError> {
                 #(#reads)*
+                #(#sync_body)*
+                #(#body_reads)*
                 #(#validations)*
-                Ok(#name { #(#fields_to_return),* })
+                Ok(#name { #(#fields_to_return,)* #(#sync_body_field)* })
+            }
+
+            /// Parses the model the way [`Self::parse`] does, with the body read out of `body` —
+            /// the request's `get_body` / `take_body_stream` are not called. Path, headers and
+            /// query are read first, so a request that fails on them does not wait for its body.
+            ///
+            /// * Named body fields: a JSON body is read member by member as it arrives, and only
+            ///   the members the model names are kept; any other body is read whole.
+            /// * `#[http_body_raw]`: the whole body.
+            /// * `#[http_body_as_stream]`: `body` itself goes into the field, unread.
+            /// * No body fields: `body` is dropped unread.
+            ///
+            /// The bounds are the same for every model, so a caller that only knows the type name
+            /// can call it.
+            pub async fn parse_with_body_stream<TStream, TError>(
+                request: &impl my_http_utils::http_input::core::THttpRequest,
+                body: TStream,
+            ) -> Result<Self, my_http_utils::http_input::HttpParseError>
+            where
+                TStream: my_http_utils::rust_extensions::AsyncBytesStream<TError>
+                    + Send
+                    + Sync
+                    + 'static,
+                TError: Into<my_http_utils::http_input::HttpParseError> + 'static,
+            {
+                #(#reads)*
+                #(#stream_body)*
+                #(#body_reads)*
+                #(#validations)*
+                Ok(#name { #(#fields_to_return,)* #(#stream_body_field)* })
             }
         }
     })
@@ -273,28 +370,18 @@ fn read_body(field: &InputField) -> Result<TokenStream, syn::Error> {
     }
 }
 
-fn read_body_raw(field: &InputField) -> Result<TokenStream, syn::Error> {
+/// An `Option` `#[http_body_raw]` reads a *named* body field (the non-Option one takes the whole
+/// body — see `generate_parse`).
+fn read_body_raw_optional(field: &InputField) -> Result<TokenStream, syn::Error> {
     let ident = field.property.get_field_name_ident();
-    if field.property.ty.is_option() {
-        let name = field.get_input_field_name()?;
-        Ok(quote! {
-            #ident: if let Some(value) = __body.get_optional(#name) {
-                Some(value.try_into()?)
-            } else {
-                None
-            }
-        })
-    } else {
-        // Non-Option: the whole body, verbatim (no content-type parsing). `read_raw_body` returns
-        // the raw `Vec<u8>`; the field type builds itself from those bytes via the crate-local
-        // `FromRawBody` — `Vec<u8>` = the bytes as-is, `RawData` / `RawDataTyped` = verbatim (the
-        // JSON error, if any, is deferred to `RawDataTyped::deserialize_json`), `String` = a utf-8
-        // check. `FromRawBody` (not `TryFrom<Vec<u8>>`) keeps std's `From` free for the client-side
-        // `From<T>` on `RawDataTyped<T>`. Byte source, so a raw body is never mis-routed via JSON.
-        Ok(quote!(#ident: my_http_utils::http_input::core::FromRawBody::from_raw_body(
-            my_http_utils::http_input::core::read_raw_body(request)
-        )?))
-    }
+    let name = field.get_input_field_name()?;
+    Ok(quote! {
+        #ident: if let Some(value) = __body.get_optional(#name) {
+            Some(value.try_into()?)
+        } else {
+            None
+        }
+    })
 }
 
 /// Struct/enum field: only a bare `default` (→ `create_default()`) is allowed; otherwise it is

@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     pub fn test_with_default_scheme() {
-        let uri_builder = UrlBuilderInner::new("google.com".into());
+        let uri_builder = UrlBuilderInner::new("google.com");
 
         assert_eq!(uri_builder.host_index, 7);
         assert_eq!(uri_builder.port_index, 0);
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!("http://google.com", uri_builder.get_scheme_and_host());
         assert_eq!("google.com", uri_builder.get_host());
 
-        assert_eq!(true, uri_builder.get_scheme().is_http());
+        assert!(uri_builder.get_scheme().is_http());
         assert_eq!("google.com", uri_builder.get_host_port());
         assert_eq!("/", uri_builder.get_path());
 
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     pub fn test_with_http_scheme() {
-        let uri_builder = UrlBuilderInner::new("http://google.com".into());
+        let uri_builder = UrlBuilderInner::new("http://google.com");
 
         assert_eq!(uri_builder.host_index, 7);
         assert_eq!(uri_builder.port_index, 0);
@@ -364,7 +364,7 @@ mod tests {
 
         assert_eq!("http://google.com", uri_builder.to_string());
         assert_eq!("http://google.com", uri_builder.get_scheme_and_host());
-        assert_eq!(true, uri_builder.get_scheme().is_http());
+        assert!(uri_builder.get_scheme().is_http());
         assert_eq!("google.com", uri_builder.get_host_port());
         assert_eq!("/", uri_builder.get_path());
         assert_eq!("/", uri_builder.get_path_and_query());
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     pub fn test_with_http_scheme_and_last_slash() {
-        let uri_builder = UrlBuilderInner::new("http://google.com/".into());
+        let uri_builder = UrlBuilderInner::new("http://google.com/");
 
         assert_eq!(uri_builder.host_index, 7);
         assert_eq!(uri_builder.port_index, 0);
@@ -381,7 +381,7 @@ mod tests {
 
         assert_eq!("http://google.com/", uri_builder.to_string());
         assert_eq!("http://google.com", uri_builder.get_scheme_and_host());
-        assert_eq!(true, uri_builder.get_scheme().is_http());
+        assert!(uri_builder.get_scheme().is_http());
         assert_eq!("google.com", uri_builder.get_host_port());
         assert_eq!("/", uri_builder.get_path());
         assert_eq!("/", uri_builder.get_path_and_query());
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     pub fn test_with_https_scheme() {
-        let uri_builder = UrlBuilderInner::new("https://google.com".into());
+        let uri_builder = UrlBuilderInner::new("https://google.com");
 
         assert_eq!(uri_builder.host_index, 8);
         assert_eq!(uri_builder.port_index, 0);
@@ -399,7 +399,7 @@ mod tests {
         assert_eq!("https://google.com", uri_builder.to_string());
         assert_eq!("https://google.com", uri_builder.get_scheme_and_host());
 
-        assert_eq!(true, uri_builder.get_scheme().is_https());
+        assert!(uri_builder.get_scheme().is_https());
         assert_eq!("google.com", uri_builder.get_host_port());
         assert_eq!("/", uri_builder.get_path());
         assert_eq!("/", uri_builder.get_path_and_query());
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     pub fn test_path_segments() {
-        let mut uri_builder = UrlBuilderInner::new("https://google.com".into());
+        let mut uri_builder = UrlBuilderInner::new("https://google.com");
         assert_eq!(uri_builder.host_index, 8);
         assert_eq!(uri_builder.port_index, 0);
         assert_eq!(uri_builder.path_index, 0);
@@ -420,7 +420,7 @@ mod tests {
         assert_eq!("https://google.com/first/second", uri_builder.as_str());
         assert_eq!("https://google.com", uri_builder.get_scheme_and_host());
 
-        assert_eq!(true, uri_builder.get_scheme().is_https());
+        assert!(uri_builder.get_scheme().is_https());
         assert_eq!("google.com", uri_builder.get_host_port());
         assert_eq!("/first/second", uri_builder.get_path());
         assert_eq!("/first/second", uri_builder.get_path_and_query());
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     pub fn test_path_segments_with_slug_at_the_end() {
-        let mut uri_builder = UrlBuilderInner::new("https://google.com/".into());
+        let mut uri_builder = UrlBuilderInner::new("https://google.com/");
         assert_eq!(uri_builder.host_index, 8);
         assert_eq!(uri_builder.port_index, 0);
         assert_eq!(uri_builder.path_index, 18);
@@ -439,7 +439,7 @@ mod tests {
         assert_eq!("https://google.com/first/second", uri_builder.to_string());
         assert_eq!("https://google.com", uri_builder.get_scheme_and_host());
 
-        assert_eq!(true, uri_builder.get_scheme().is_https());
+        assert!(uri_builder.get_scheme().is_https());
         assert_eq!("google.com", uri_builder.get_host_port());
         assert_eq!("/first/second", uri_builder.get_path());
         assert_eq!("/first/second", uri_builder.get_path_and_query());
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     pub fn test_query_with_no_path() {
-        let mut uri_builder = UrlBuilderInner::new("https://google.com".into());
+        let mut uri_builder = UrlBuilderInner::new("https://google.com");
         uri_builder.append_query_param("first", Some("first_value"));
         uri_builder.append_query_param("second", Some("second_value"));
 
@@ -462,7 +462,7 @@ mod tests {
         );
         assert_eq!("https://google.com", uri_builder.get_scheme_and_host());
 
-        assert_eq!(true, uri_builder.get_scheme().is_https());
+        assert!(uri_builder.get_scheme().is_https());
         assert_eq!("google.com", uri_builder.get_host_port());
         assert_eq!(uri_builder.get_path(), "/",);
         assert_eq!(
@@ -473,17 +473,17 @@ mod tests {
 
     #[test]
     pub fn test_get_domain_different_cases() {
-        let uri_builder = UrlBuilderInner::new("https://my-domain:5123".into());
+        let uri_builder = UrlBuilderInner::new("https://my-domain:5123");
 
         assert_eq!("my-domain:5123", uri_builder.get_host_port());
         assert_eq!("my-domain", uri_builder.get_host());
 
-        let uri_builder = UrlBuilderInner::new("https://my-domain:5123/my-path".into());
+        let uri_builder = UrlBuilderInner::new("https://my-domain:5123/my-path");
 
         assert_eq!("my-domain:5123", uri_builder.get_host_port());
         assert_eq!("my-domain", uri_builder.get_host());
 
-        let uri_builder = UrlBuilderInner::new("https://my-domain/my-path".into());
+        let uri_builder = UrlBuilderInner::new("https://my-domain/my-path");
 
         assert_eq!("my-domain", uri_builder.get_host_port());
         assert_eq!("my-domain", uri_builder.get_host());
@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     pub fn test_path_and_query() {
-        let mut uri_builder = UrlBuilderInner::new("https://google.com".into());
+        let mut uri_builder = UrlBuilderInner::new("https://google.com");
         uri_builder.append_path_segment("first");
         uri_builder.append_path_segment("second");
 
@@ -504,7 +504,7 @@ mod tests {
         );
         assert_eq!("https://google.com", uri_builder.get_scheme_and_host());
 
-        assert_eq!(true, uri_builder.get_scheme().is_https());
+        assert!(uri_builder.get_scheme().is_https());
         assert_eq!("google.com", uri_builder.get_host_port());
         assert_eq!("/first/second", uri_builder.get_path());
         assert_eq!(

@@ -39,6 +39,13 @@ impl FakeRequest {
         self.body = body.into();
         self
     }
+    /// A body with no `Content-Type` — what it is has to be told from the bytes.
+    #[allow(dead_code)]
+    pub(crate) fn untyped_body(mut self, body: impl Into<Vec<u8>>) -> Self {
+        self.content_type = None;
+        self.body = body.into();
+        self
+    }
 }
 
 impl THttpRequest for FakeRequest {
@@ -135,7 +142,7 @@ fn all_sources_parse_ok() {
     assert_eq!(model.note, Some("hi".to_string()));
 
     // READS_BODY reflects the http_body field.
-    assert!(AllSources::READS_BODY);
+    const { assert!(AllSources::READS_BODY) };
 }
 
 #[test]
@@ -358,7 +365,7 @@ fn raw_body_as_string() {
     let request = FakeRequest::default().body("text/plain", "hello raw".as_bytes().to_vec());
     let model = RawStringModel::parse(&request).unwrap();
     assert_eq!(model.body, "hello raw");
-    assert!(RawStringModel::READS_BODY);
+    const { assert!(RawStringModel::READS_BODY) };
 }
 
 // ---- error cases ------------------------------------------------------------
@@ -448,7 +455,7 @@ fn missing_required_path() {
 
 #[test]
 fn reads_body_false_for_query_only_model() {
-    assert!(!RequiredQuery::READS_BODY);
+    const { assert!(!RequiredQuery::READS_BODY) };
 }
 
 // ---- regressions from the adversarial review -------------------------------
@@ -584,8 +591,16 @@ fn raw_data_from_vec_is_infallible_and_verbatim() {
     let raw = vec![9u8, 8, 7, 0, 200];
     let rd: RawData = raw.clone().into();
     assert_eq!(rd.as_slice(), raw.as_slice());
-    // the blanket `TryFrom<Vec<u8>>` (Error = Infallible) that comes from that `From` also holds:
-    let rd2: RawData = raw.clone().try_into().unwrap();
+    // the blanket `TryFrom<Vec<u8>>` (Error = Infallible) that comes from that `From` also holds —
+    // taken through a generic bound, which is the only way it is ever reached for a type that has
+    // the `From`, and which pins `Error = Infallible` at compile time:
+    fn infallibly<T: TryFrom<Vec<u8>, Error = std::convert::Infallible>>(raw: Vec<u8>) -> T {
+        match T::try_from(raw) {
+            Ok(value) => value,
+            Err(never) => match never {},
+        }
+    }
+    let rd2: RawData = infallibly(raw.clone());
     assert_eq!(rd2.as_slice(), raw.as_slice());
 }
 
@@ -642,7 +657,7 @@ fn raw_data_typed_body_parses_and_deserializes() {
     assert_eq!(params.account_id, "acc-1");
     assert_eq!(params.limit, 50);
 
-    assert!(QueryAuditInput::READS_BODY);
+    const { assert!(QueryAuditInput::READS_BODY) };
 }
 
 #[test]

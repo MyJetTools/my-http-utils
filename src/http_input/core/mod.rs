@@ -2,7 +2,9 @@
 //! `&str -> T` converters, the source-name constants, the JSON-member machinery, the value→field
 //! `TryInto` conversions (`mappers`), and `THttpRequest` — the transport-free request
 //! abstraction the derive-generated `parse` reads through (the server implements it over its
-//! concrete request; tests implement it over in-memory data).
+//! concrete request; tests implement it over in-memory data). `BodyFromStream` is the body half of
+//! the generated `parse_with_body_stream`: the same body readers, over a body that comes as a
+//! `rust_extensions::AsyncBytesStream`.
 //!
 //! **Feature gating.** The module is always compiled, but almost all of it sits behind the
 //! `server` feature. Only the two pieces the *field types* at [`super`] depend on are
@@ -22,6 +24,8 @@ pub(crate) mod convert_from_str;
 pub mod json_encoded_data;
 
 #[cfg(feature = "server")]
+mod body_from_stream;
+#[cfg(feature = "server")]
 mod body_reader;
 #[cfg(feature = "server")]
 mod content_type;
@@ -36,6 +40,8 @@ mod request;
 
 #[cfg(feature = "server")]
 pub use content_type::{extract_web_form_boundary, BodyContentType};
+#[cfg(feature = "server")]
+pub use body_from_stream::{read_raw_body_from_stream, BodyFromStream};
 #[cfg(feature = "server")]
 pub use body_reader::BodyReader;
 #[cfg(feature = "server")]

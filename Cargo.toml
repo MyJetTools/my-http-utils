@@ -38,6 +38,10 @@ http-request-schema-macros = { path = "http-request-schema-macros" }
 # `default-features = false` keeps the runtime, mio and every transport out, so this stays
 # platform-independent and compiles for `wasm32-unknown-unknown`.
 tokio = { version = "*", default-features = false, features = ["sync"] }
+# `rust_extensions::AsyncBytesStream` is an `#[async_trait]` trait — implementing it (`HttpBodyReader`
+# is a stream of bytes as well) needs the macro. Already in the tree through rust-extensions and
+# my-json, and a proc-macro, so it costs no build and nothing on wasm.
+async-trait = "*"
 
 [dev-dependencies]
 # A runtime, for tests only. The library itself never needs one — it owns a channel, not a pump.
