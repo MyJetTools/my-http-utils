@@ -4,6 +4,8 @@
 #[cfg(test)]
 mod body_stream_tests;
 #[cfg(test)]
+mod form_data_tests;
+#[cfg(test)]
 mod parse_from_stream_tests;
 #[cfg(test)]
 mod parse_tests;

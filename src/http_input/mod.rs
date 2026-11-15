@@ -33,6 +33,7 @@ pub mod core;
 mod body_as_stream;
 mod error;
 mod file_content;
+mod form_data_property;
 mod password;
 mod raw_data;
 mod raw_data_typed;
@@ -48,6 +49,7 @@ pub use body_as_stream::{
 };
 pub use error::HttpParseError;
 pub use file_content::FileContent;
+pub use form_data_property::FormDataProperty;
 pub use password::PasswordHttpInputField;
 pub use raw_data::RawData;
 pub use raw_data_typed::RawDataTyped;

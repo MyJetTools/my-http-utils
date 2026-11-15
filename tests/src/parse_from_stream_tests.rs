@@ -10,7 +10,8 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use my_http_utils::http_input::{HttpBodyAsStream, HttpParseError, RawData};
+use my_http_utils::body::FormDataBody;
+use my_http_utils::http_input::{FileContent, HttpBodyAsStream, HttpParseError, RawData};
 use my_http_utils::macros::*;
 use my_http_utils::rust_extensions::AsyncBytesStream;
 
@@ -393,6 +394,48 @@ async fn a_multipart_body_reads_like_the_whole_body() {
 
     assert_eq!(model.title, "MyTitle");
     assert_eq!(model.count, 5);
+}
+
+#[derive(Debug, MyHttpInput)]
+struct FileUploadInput {
+    #[http_form_data(name = "caName", description = "")]
+    ca_name: String,
+    #[http_form_data(name = "cert", description = "")]
+    cert: FileContent,
+    #[http_form_data(name = "extra", description = "")]
+    extra: Vec<FileContent>,
+    #[http_form_data(name = "note", description = "")]
+    note: Option<FileContent>,
+}
+
+#[tokio::test]
+async fn multipart_files_read_from_a_stream_like_the_whole_body() {
+    let fd = FormDataBody::new("TESTBOUNDARY")
+        .append_form_data_field("caName", "My CA")
+        .append_form_data_file("cert", "ca.pem", "application/x-pem-file", b"\r\nPEM\0\r\n")
+        .append_form_data_file("extra", "1.bin", "application/octet-stream", b"\0\x01")
+        .append_form_data_file("extra", "2.bin", "application/octet-stream", b"\r\n\r\n");
+    let content_type = fd.get_content_type();
+    let body = fd.into_bytes();
+
+    let request = FakeRequest::default().body(&content_type, body.clone());
+    let expected = FileUploadInput::parse(&request).unwrap();
+    assert_eq!(expected.cert.content, b"\r\nPEM\0\r\n");
+    assert_eq!(expected.extra.len(), 2);
+    assert_eq!(expected.extra[1].content, b"\r\n\r\n");
+    assert_eq!(expected.note, None);
+
+    for chunk_size in [1, 7, body.len()] {
+        let model =
+            FileUploadInput::parse_with_body_stream(&request, Chunks::split(&body, chunk_size))
+                .await
+                .unwrap();
+
+        assert_eq!(model.ca_name, expected.ca_name);
+        assert_eq!(model.cert, expected.cert);
+        assert_eq!(model.extra, expected.extra);
+        assert_eq!(model.note, expected.note);
+    }
 }
 
 #[derive(Debug, MyHttpInput)]

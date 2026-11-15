@@ -1,8 +1,7 @@
-use rust_extensions::{slice_of_u8_utils::SliceOfU8Ext, MaybeShortString};
-
 use crate::form_data_reader::ReadingFromDataError;
 
-use super::ContentDispositionParser;
+use super::form_data_part::parse_error;
+use super::{FormDataHeader, FormDataPart};
 
 #[derive(Debug)]
 pub enum FormDataItem<'s> {
@@ -70,126 +69,41 @@ impl<'s> FormDataItem<'s> {
     /// Parses a single multipart part.
     ///
     /// Returns an error (rather than panicking) on any malformed/attacker-controlled
-    /// input, so a bad part can be skipped instead of crashing the server.
+    /// input, so a bad part can be skipped instead of crashing the server. Reads the part through
+    /// [`FormDataPart::try_parse`] and then sorts it into a value or a file, see
+    /// [`FormDataItem::try_from`].
     pub fn try_parse(src: &'s [u8]) -> Result<Self, ReadingFromDataError> {
-        let mut content_type = None;
-        let content;
-        let mut file_name = None;
-        let mut name = None;
-
-        let mut pos = 0;
-
-        loop {
-            // Blank line (CRLFCRLF) marks the end of the part headers.
-            match src.get(pos..pos + 4) {
-                Some([13, 10, 13, 10]) => {
-                    pos += 4;
-
-                    let body = &src[pos..];
-                    // Strip the trailing CRLF that precedes the next boundary, if present.
-                    content = Some(if body.ends_with(&[13, 10]) {
-                        &body[..body.len() - 2]
-                    } else {
-                        body
-                    });
-                    break;
-                }
-                Some(_) => {}
-                None => {
-                    return Err(parse_error(
-                        "Unexpected end of multipart part: no blank line after headers",
-                    ));
-                }
-            }
-
-            pos = src
-                .find_pos_by_condition(pos, |p| p > 32)
-                .ok_or_else(|| parse_error("Malformed multipart part: no header start"))?;
-
-            let colon_pos = src
-                .find_byte_pos(b':', pos)
-                .ok_or_else(|| parse_error("Malformed multipart header: missing ':'"))?;
-
-            let header_name_str = std::str::from_utf8(&src[pos..colon_pos])
-                .map_err(|_| parse_error("Malformed multipart header name (invalid utf8)"))?;
-
-            let header_name = MaybeShortString::from_str_as_lower_case(header_name_str);
-            let header_name = header_name.as_str();
-
-            match header_name {
-                "content-disposition" => {
-                    let content_disposition_data = &src[colon_pos + 1..];
-
-                    let end = content_disposition_data
-                        .iter()
-                        .position(|p| *p == 13)
-                        .ok_or_else(|| parse_error("Malformed Content-Disposition: no CR"))?;
-
-                    let content_disposition_data = &content_disposition_data[..end];
-
-                    for itm in ContentDispositionParser::new(content_disposition_data) {
-                        // MIME parameter names are case-insensitive.
-                        match itm.key.to_ascii_lowercase().as_str() {
-                            "name" => name = itm.value,
-                            "filename" => file_name = itm.value,
-                            _ => {}
-                        }
-                    }
-
-                    pos = src
-                        .find_byte_pos(13, colon_pos)
-                        .ok_or_else(|| parse_error("Malformed Content-Disposition line"))?;
-                }
-                "content-type" => {
-                    let start = src
-                        .find_pos_by_condition(colon_pos + 1, |p| p > 32)
-                        .ok_or_else(|| parse_error("Malformed Content-Type header"))?;
-                    let end = src
-                        .find_pos_by_condition(start, |p| p == 13)
-                        .ok_or_else(|| parse_error("Malformed Content-Type line"))?;
-                    content_type = Some(
-                        std::str::from_utf8(&src[start..end])
-                            .map_err(|_| parse_error("Content-Type is not valid utf8"))?,
-                    );
-
-                    pos = end;
-                }
-                _ => {
-                    pos = src
-                        .find_byte_pos(13, colon_pos)
-                        .ok_or_else(|| parse_error("Malformed multipart header line"))?;
-                }
-            }
-        }
-
-        let content = content.ok_or_else(|| parse_error("Missing multipart content"))?;
-
-        // A file part needs BOTH a Content-Type and a filename. Content-Type without a
-        // filename (allowed by RFC 7578 on ordinary fields) is treated as a value.
-        match (content_type, file_name) {
-            (Some(content_type), Some(file_name)) => Ok(Self::File {
-                file_name,
-                content_type,
-                content,
-                name: name.ok_or_else(|| parse_error("File part is missing 'name'"))?,
-            }),
-            _ => Ok(Self::ValueAsString {
-                value: if content.is_empty() {
-                    ""
-                } else {
-                    std::str::from_utf8(content)
-                        .map_err(|_| parse_error("Field value is not valid utf8"))?
-                },
-                name: name.ok_or_else(|| parse_error("Field is missing 'name'"))?,
-            }),
-        }
+        FormDataPart::try_parse(src)?.try_into()
     }
 }
 
-fn parse_error(error: &str) -> ReadingFromDataError {
-    ReadingFromDataError::ValidationError {
-        field: "form-data".to_string(),
-        error: error.to_string(),
+/// The value / file view of a part. A part is a [`FormDataItem::File`] when its header has BOTH a
+/// `filename` and a `Content-Type`; any other part is a [`FormDataItem::ValueAsString`], which needs
+/// its content to be UTF-8. ([`FormDataPart`] itself has no such rule: a `#[http_form_data]` field
+/// reads the header and the content as they are, see `http_input::FormDataProperty`.)
+impl<'s> TryFrom<FormDataPart<'s>> for FormDataItem<'s> {
+    type Error = ReadingFromDataError;
+
+    fn try_from(part: FormDataPart<'s>) -> Result<Self, Self::Error> {
+        let FormDataHeader {
+            name,
+            file_name,
+            content_type,
+        } = part.header;
+
+        match (content_type, file_name) {
+            (Some(content_type), Some(file_name)) => Ok(Self::File {
+                name,
+                file_name,
+                content_type,
+                content: part.content,
+            }),
+            _ => Ok(Self::ValueAsString {
+                name,
+                value: std::str::from_utf8(part.content)
+                    .map_err(|_| parse_error("Field value is not valid utf8"))?,
+            }),
+        }
     }
 }
 

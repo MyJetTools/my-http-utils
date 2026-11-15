@@ -114,7 +114,7 @@ pub fn generate_parse(
                 validations.push(validator);
             }
             body_names.push(field.get_input_field_name()?);
-            body_reads.push(read_body(field)?);
+            body_reads.push(read_form_data(field)?);
         }
     }
 
@@ -376,6 +376,53 @@ fn read_body(field: &InputField) -> Result<TokenStream, syn::Error> {
                 });
             }
             read_required(field, quote!(__body))
+        }
+    }
+}
+
+/// A `#[http_form_data]` field, read through `my_http_utils::http_input::FormDataProperty`: the
+/// part's header and content go to the field's type, and the type builds itself out of them.
+/// `Option` is a part that may be absent; `Vec` is every part of the field's name, none being an
+/// empty `Vec` (what the client sends for one). The local is annotated with the field's type as
+/// written — that is what picks the implementation, and a path-qualified type stays resolvable.
+fn read_form_data(field: &InputField) -> Result<TokenStream, syn::Error> {
+    let name = field.get_input_field_name()?;
+    let ident = field.property.get_field_name_ident();
+    let ty = &field.property.field.ty;
+
+    match &field.property.ty {
+        PropertyType::OptionOf(sub_ty) => {
+            verify_default_value(field, sub_ty)?;
+            let default_value = field.get_default_value_opt_case()?;
+            Ok(quote! {
+                let #ident: #ty = match __body.get_form_data(#name)? {
+                    Some(value) => Some(value),
+                    None => #default_value,
+                };
+            })
+        }
+        PropertyType::VecOf(_) => {
+            if field.attr.get_default().is_some() {
+                return field.throw_error("Vec default value is not supported");
+            }
+            Ok(quote! {
+                let #ident: #ty = __body.get_form_data_vec(#name)?;
+            })
+        }
+        _ => {
+            verify_default_value(field, &field.property.ty)?;
+            if field.has_default_value() {
+                let default_value = field.get_default_value_non_opt_case()?;
+                return Ok(quote! {
+                    let #ident: #ty = match __body.get_form_data(#name)? {
+                        Some(value) => value,
+                        None => #default_value,
+                    };
+                });
+            }
+            Ok(quote! {
+                let #ident: #ty = __body.get_form_data_required(#name)?;
+            })
         }
     }
 }

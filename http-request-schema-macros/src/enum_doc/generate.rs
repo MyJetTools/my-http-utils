@@ -65,6 +65,11 @@ pub fn generate(ast: &syn::DeriveInput, as_integer: bool) -> Result<TokenStream,
         quote::quote!()
     };
 
+    // A `#[http_form_data]` field of the enum — written as `as_str()`, read back by the same
+    // value-or-id match as `TryFrom<HttpInputValue>`. Unconditional: the client half of the derive
+    // writes form-data fields through this trait in every build.
+    let form_data_property = generate_form_data_property(struct_name, &fields)?;
+
     // serde, over the SAME string `as_str()` emits. Unconditional: an enum nested in an object
     // structure is written by `JsonValueWriter` (this string) but read back by serde, and an enum
     // inside a `RawDataTyped<T>` payload is serde on both sides — so the two must not disagree in
@@ -125,6 +130,8 @@ pub fn generate(ast: &syn::DeriveInput, as_integer: bool) -> Result<TokenStream,
         #data_type_provider
 
         #try_from_input
+
+        #form_data_property
 
         #serde_impls
     };
@@ -321,6 +328,65 @@ fn generate_try_from_input(
                         value: __s,
                     }),
                 }
+            }
+        }
+    })
+}
+
+/// Emits `my_http_utils::http_input::FormDataProperty`: the part's content read as text and matched
+/// against each case's string form plus its numeric `id` — the set `TryFrom<HttpInputValue>`
+/// accepts — and the case written as `as_str()`, a plain value part.
+///
+/// Every path is fully qualified and every method inherent: method resolution here happens at the
+/// derive site, against whatever traits the user has in scope (see `generate_serde_impls`).
+fn generate_form_data_property(
+    struct_name: &syn::Ident,
+    cases: &[EnumJson],
+) -> Result<proc_macro2::TokenStream, syn::Error> {
+    let mut arms = Vec::with_capacity(cases.len());
+
+    for case in cases {
+        let variant = case.src.get_name_ident();
+        let str_value = case.get_enum_case_str_value()?;
+
+        let mut patterns = vec![str_value.clone()];
+        if let Some(id) = case.attr.id.as_ref() {
+            if id != &str_value {
+                patterns.push(id.clone());
+            }
+        }
+        let patterns = patterns.iter().map(|p| quote::quote!(#p));
+
+        arms.push(quote::quote! {
+            #(#patterns)|* => Ok(Self::#variant),
+        });
+    }
+
+    Ok(quote::quote! {
+        impl my_http_utils::http_input::FormDataProperty for #struct_name {
+            fn from_form_data_content(
+                __header: my_http_utils::form_data_reader::FormDataHeader<'_>,
+                __content: &[u8],
+            ) -> Result<Self, my_http_utils::http_input::HttpParseError> {
+                let __s = <::std::string::String as my_http_utils::http_input::FormDataProperty>::from_form_data_content(
+                    __header, __content,
+                )?;
+                match __s.as_str() {
+                    #(#arms)*
+                    _ => Err(my_http_utils::http_input::HttpParseError::CanNotParseValue {
+                        name: ::std::string::String::from(__header.name),
+                        src: my_http_utils::http_input::core::data_src::SRC_FORM_DATA,
+                        value: __s,
+                    }),
+                }
+            }
+
+            fn write_form_data(
+                &self,
+                __name: &'static str,
+                __form_data: my_http_utils::body::FormDataBody,
+            ) -> my_http_utils::body::FormDataBody {
+                __form_data.append_form_data_field(__name, self.as_str())
             }
         }
     })

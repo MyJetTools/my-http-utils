@@ -111,6 +111,46 @@ impl<'s> JsonEncodedValueAsString<'s> {
         })
     }
 
+    /// The texts a `Vec<T>` `#[http_form_data]` field is read from: one per element of an array
+    /// member — a string element unescaped, any other element verbatim (`100.00` stays `100.00`) —
+    /// or the member's own [`Self::as_string`] when it is not an array.
+    pub fn as_text_items(&self) -> Result<Vec<String>, HttpParseError> {
+        // The first byte rather than `is_array()`: the `JsonValueRef` accessors borrow the value
+        // for the whole document lifetime, which a `&self` here can not lend.
+        let slice = self.value.as_slice();
+        if slice.first() != Some(&b'[') {
+            return Ok(vec![self.as_string()?]);
+        }
+
+        let items = my_json::json_reader::JsonArrayIterator::new(slice)
+            .map_err(|err| self.cannot_parse(format!("{:?}", err)))?;
+
+        let mut result = Vec::new();
+        while let Some(item) = items.get_next() {
+            let item = item.map_err(|err| self.cannot_parse(format!("{:?}", err)))?;
+            let raw = item.as_slice();
+            let text = if raw.first() == Some(&b'"') {
+                serde_json::from_slice::<String>(raw)
+                    .map_err(|err| self.cannot_parse(err.to_string()))?
+            } else {
+                std::str::from_utf8(raw)
+                    .map_err(|err| self.cannot_parse(err.to_string()))?
+                    .to_string()
+            };
+            result.push(text);
+        }
+
+        Ok(result)
+    }
+
+    fn cannot_parse(&self, value: String) -> HttpParseError {
+        HttpParseError::CanNotParseValue {
+            name: self.name.to_string(),
+            src: SRC_BODY_JSON,
+            value,
+        }
+    }
+
     /// The member's verbatim source bytes — for `RawData` / `RawDataTyped` fields, handed over
     /// untouched (no key reordering, no re-escaping). For a JSON string member this is the quoted,
     /// escaped source form, matching the original reader.

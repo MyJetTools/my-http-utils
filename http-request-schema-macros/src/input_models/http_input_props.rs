@@ -1,4 +1,4 @@
-use types_reader::{MacrosAttribute, StructProperty};
+use types_reader::{MacrosAttribute, PropertyType, StructProperty};
 
 use super::InputField;
 use crate::attributes::*;
@@ -200,6 +200,26 @@ impl<'s> HttpInputProperties<'s> {
             }
         }
 
+        // A `Vec<T>` form-data field is one part per item, so `Vec<u8>` would be one part per
+        // byte — never what is meant, and it would compile. Say what to use instead.
+        if let Some(form_data_fields) = &self.form_data_fields {
+            for field in form_data_fields {
+                let ty = match &field.property.ty {
+                    PropertyType::OptionOf(inner) => inner.as_ref(),
+                    other => other,
+                };
+                if let PropertyType::VecOf(inner) = ty {
+                    if matches!(inner.as_ref(), PropertyType::U8) {
+                        return field.throw_error(
+                            "`Vec<u8>` in #[http_form_data] would be sent as one part per byte. \
+                             Use `RawData` for the content of a part, or `FileContent` to keep \
+                             its file name and content type as well",
+                        );
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -268,4 +288,61 @@ fn check_duplicated(items: &[InputField]) -> Result<(), syn::Error> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+
+    use super::HttpInputProperties;
+
+    /// The model's fields through the checks the derive runs, as the first error's message.
+    fn check(model: proc_macro2::TokenStream) -> Result<(), String> {
+        let ast: syn::DeriveInput = syn::parse2(model).unwrap();
+        let fields = types_reader::StructProperty::read(&ast).map_err(|e| e.to_string())?;
+        HttpInputProperties::new(&fields)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn vec_of_u8_in_form_data_is_rejected_with_what_to_use_instead() {
+        for ty in [quote!(Vec<u8>), quote!(Option<Vec<u8>>)] {
+            let model = quote!(struct M { #[http_form_data(description = "")] f: #ty });
+            let err = check(model).unwrap_err();
+            assert!(err.contains("one part per byte"), "{}", err);
+            assert!(err.contains("RawData"), "{}", err);
+            assert!(err.contains("FileContent"), "{}", err);
+        }
+    }
+
+    #[test]
+    fn other_form_data_field_types_are_left_to_their_trait() {
+        check(quote! {
+            struct M {
+                #[http_form_data(description = "")]
+                cert: FileContent,
+                #[http_form_data(description = "")]
+                raw: RawData,
+                #[http_form_data(description = "")]
+                files: Vec<FileContent>,
+                #[http_form_data(description = "")]
+                counts: Vec<u32>,
+                #[http_form_data(description = "")]
+                note: Option<String>,
+            }
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn vec_of_u8_outside_form_data_is_untouched() {
+        check(quote!(
+            struct M {
+                #[http_body_raw(description = "")]
+                data: Vec<u8>,
+            }
+        ))
+        .unwrap();
+    }
 }

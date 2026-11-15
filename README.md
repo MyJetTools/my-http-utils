@@ -96,6 +96,27 @@ a body cannot be materialised and streamed at the same time.
 `to_lowercase`, `to_uppercase`, `validator`, `default`) have nothing to act on — the value never
 exists as a string — and the field can not be `Option` (a compile error).
 
+#### Form-data fields: `FormDataProperty`
+
+A `multipart/form-data` part is a header (`name`; on a file part also `filename` and
+`Content-Type`) plus content. The type of a `#[http_form_data]` field implements
+`http_input::FormDataProperty` and takes what it needs of the two. The derive reads the field
+through it on the server and writes it through it on the client, so the halves can not drift apart:
+
+| field type | reads | sends |
+|---|---|---|
+| `String`, ints / floats, `bool`, `DateTimeAsMicroseconds` | the content as text (a file part too: an uploaded `.pem` into a `String` works) | a value part |
+| `FileContent` | `filename`, `Content-Type` (`text/plain` when absent) and the content; a part with no `filename` is an error | a file part (an empty `content_type` goes out as `application/octet-stream`) |
+| `RawData` | the content of any part, as it is | a file part named `blob`, `application/octet-stream` |
+| a `MyHttpStringEnum` / `MyHttpIntegerEnum`, an `#[http_input_field]` type | the content as text — the derive implements the trait | a value part |
+| a type of your own | whatever your `FormDataProperty` impl does (plus a `DataTypeProvider` for the schema) | likewise |
+
+`Option<T>` is a part that may be absent. `Vec<T>` is one part per item under the field's name; an
+empty `Vec` sends nothing and reads back empty. `Vec<u8>` is a compile error: use `RawData` or
+`FileContent`. A form-data model still accepts an `x-www-form-urlencoded` or JSON body, where each
+value reaches `T` with a name-only header and its text. `FileContent` and `RawData` are `binary`
+in the schema, which Swagger UI shows as a file picker.
+
 #### Three ways to describe a JSON body
 
 There is no separate "whole body" attribute for a JSON object — **the body is assembled from the
@@ -205,7 +226,7 @@ type — both carry their own conversion and are unaffected.
 | `my_http_utils::body::HttpRequestBody` | an outgoing body: `Json` / `UrlEncoded` / `FormData` / `Raw` / `Stream` / `Empty`. A transport must handle `Stream` (or check `is_stream()`) **before** `into_vec()` — a streamed body has no bytes to give, and `into_vec()` returns an empty `Vec` |
 | `my_http_utils::body::{FormDataBody, UrlEncodedBody}` | build `multipart/form-data` / `x-www-form-urlencoded` bodies |
 | `my_http_utils::url_encoded_data_reader::UrlEncodedDataReader` | read `x-www-form-urlencoded` (query strings / bodies) |
-| `my_http_utils::form_data_reader::FormDataReader` | read `multipart/form-data` |
+| `my_http_utils::form_data_reader::{FormDataReader, FormDataPart, FormDataHeader}` | read `multipart/form-data`: every part as its header + content (`get_part` / `get_parts`), or the older value / file view (`get_optional` / `get_required`) |
 | `my_http_utils::url_encoder` / `my_http_utils::url_decoder` | percent encode / decode |
 
 ### Schema (`my_http_utils::schema`)
@@ -356,6 +377,7 @@ get a `TryFrom<HttpInputValue>` so they parse too.
 | `http_input::HttpParseError` | parse failure: `RequiredParameterIsMissing{name,src}`, `CanNotParseValue{name,src,value}`, `UrlDecodeError`, `InvalidBodyFormat`, `NotSupportedContentType`, `Forbidden`, `Validation`, `BodyStream` |
 | `http_input::{RawData, RawDataTyped<T>, FileContent}` | body/file field types: verbatim bytes / verbatim bytes the handler turns into `T` on demand via `RawDataTyped::deserialize_json` / an uploaded `multipart/form-data` file |
 | `http_input::{HttpBodyAsStream, HttpBodyReader, HttpBodyStreamSender}` | the `#[http_body_as_stream]` field type and the two ends of its channel — ungated, and used in both directions (see [Streaming the request body](#streaming-the-request-body)) |
+| `http_input::FormDataProperty` | the type of a `#[http_form_data]` field: built from a part's `FormDataHeader` + content on the server, appended as a part on the client (see [Form-data fields](#form-data-fields-formdataproperty)) |
 | `http_input::PasswordHttpInputField` | a ready-made `#[http_input_field]` type — a `String` rendered as OpenAPI `password` |
 | `http_input::core::data_src::SRC_*` | source tags carried by values/errors (`Path`, `QueryString`, `Header`, `BodyJson`, …) |
 

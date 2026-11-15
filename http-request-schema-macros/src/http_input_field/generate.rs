@@ -129,6 +129,29 @@ pub fn generate(attr: TokenStream, input: TokenStream) -> Result<TokenStream, sy
             }
 
             #try_from_input
+
+            // A `#[http_form_data]` field of this type: the part's content as text, wrapped — the
+            // same as `TryFrom<HttpInputValue>` does with a value — and written back as `as_str()`.
+            // Unconditional: the client half of the derive writes form-data fields through it.
+            impl my_http_utils::http_input::FormDataProperty for #struct_name {
+                fn from_form_data_content(
+                    __header: my_http_utils::form_data_reader::FormDataHeader<'_>,
+                    __content: &[u8],
+                ) -> Result<Self, my_http_utils::http_input::HttpParseError> {
+                    let __s = <::std::string::String as my_http_utils::http_input::FormDataProperty>::from_form_data_content(
+                        __header, __content,
+                    )?;
+                    Ok(Self::new(__s))
+                }
+
+                fn write_form_data(
+                    &self,
+                    __name: &'static str,
+                    __form_data: my_http_utils::body::FormDataBody,
+                ) -> my_http_utils::body::FormDataBody {
+                    __form_data.append_form_data_field(__name, self.as_str())
+                }
+            }
     };
 
     Ok(result.into())

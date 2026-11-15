@@ -2,6 +2,11 @@ use std::fmt::Display;
 
 use rust_extensions::StrOrString;
 
+/// Written as a file part's `Content-Type` when the caller gives an empty one: an empty
+/// `Content-Type:` line is not a valid header, and `application/octet-stream` is the standard type
+/// for bytes of unknown kind.
+pub const DEFAULT_FILE_CONTENT_TYPE: &str = "application/octet-stream";
+
 pub struct FormDataBody {
     // files: Vec<MultipartFile>,
     boundary: String,
@@ -49,13 +54,17 @@ impl FormDataBody {
         let name = name.into();
         let file_name = file_name.into();
         let content_type = content_type.into();
+        let content_type = match content_type.as_str() {
+            "" => DEFAULT_FILE_CONTENT_TYPE,
+            content_type => content_type,
+        };
         write!(
             &mut self.buffer,
             "--{}\r\nContent-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: {}\r\n\r\n",
             self.boundary,
             escape_header_param(name.as_str()),
             escape_header_param(file_name.as_str()),
-            content_type.as_str()
+            escape_header_value(content_type)
         )
         .unwrap();
 
@@ -87,6 +96,21 @@ fn escape_header_param(value: &str) -> String {
     for c in value.chars() {
         match c {
             '"' => result.push_str("%22"),
+            '\r' => result.push_str("%0D"),
+            '\n' => result.push_str("%0A"),
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
+/// Escapes a whole header value (a `Content-Type`): only CR / LF, which would end the header line
+/// and let the rest of the value pass for headers of its own. Quotes stay — a media type's
+/// parameters may be quoted (`charset="utf-8"`).
+fn escape_header_value(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
             '\r' => result.push_str("%0D"),
             '\n' => result.push_str("%0A"),
             _ => result.push(c),
@@ -141,6 +165,26 @@ mod tests {
 
         assert!(!text.contains("X-Injected: 1\r\n"));
         assert!(text.contains("name=\"evil%22%0D%0AX-Injected: 1\""));
+    }
+
+    #[test]
+    fn test_empty_file_content_type_is_written_as_octet_stream() {
+        let form_data = FormDataBody::new("b").append_form_data_file("f", "a.bin", "", b"x");
+        let text = String::from_utf8(form_data.into_bytes()).unwrap();
+        assert!(text.contains("Content-Type: application/octet-stream\r\n\r\nx\r\n"));
+    }
+
+    #[test]
+    fn test_content_type_injection_is_escaped() {
+        let form_data = FormDataBody::new("b").append_form_data_file(
+            "f",
+            "a.txt",
+            "text/plain; charset=\"utf-8\"\r\nX-Injected: 1".to_string(),
+            b"x",
+        );
+        let text = String::from_utf8(form_data.into_bytes()).unwrap();
+        assert!(!text.contains("\r\nX-Injected: 1"));
+        assert!(text.contains("Content-Type: text/plain; charset=\"utf-8\"%0D%0AX-Injected: 1\r\n"));
     }
 
     #[test]

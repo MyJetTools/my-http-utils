@@ -127,6 +127,57 @@ fn field_pushes(field: &InputField, sink: Sink) -> Result<TokenStream, syn::Erro
     }
 }
 
+/// Emits the part(s) of one `#[http_form_data]` field.
+///
+/// The field's type sends itself through `my_http_utils::http_input::FormDataProperty`: a `String`
+/// as a value, a `FileContent` as a file part, a type of the model's own however it likes. An
+/// `Option` sends a part only when `Some`, a `Vec` one part per item, all under the field's name.
+///
+/// A field with a string directive (`trim` / case / `validator` / `print_request_to_console`) is
+/// materialised as a `String` and sent as a value instead — exactly as a query / header value is,
+/// since those directives only mean something on text.
+fn form_data_pushes(field: &InputField) -> Result<TokenStream, syn::Error> {
+    if has_directives(field) {
+        return field_pushes(field, Sink::FormData);
+    }
+
+    let name = field.get_input_field_name()?;
+    let ident = field.property.get_field_name_ident();
+    let write = |value: TokenStream| {
+        quote! {
+            __fd = my_http_utils::http_input::FormDataProperty::write_form_data(#value, #name, __fd);
+        }
+    };
+
+    Ok(match &field.property.ty {
+        PropertyType::OptionOf(_) => {
+            let write = write(quote!(value));
+            quote! {
+                if let Some(value) = &self.#ident {
+                    #write
+                }
+            }
+        }
+        PropertyType::VecOf(_) => {
+            let write = write(quote!(value));
+            quote! {
+                for value in &self.#ident {
+                    #write
+                }
+            }
+        }
+        _ => write(quote!(&self.#ident)),
+    })
+}
+
+fn has_directives(field: &InputField) -> bool {
+    field.attr.has_trim()
+        || field.attr.has_to_lowercase()
+        || field.attr.has_to_uppercase()
+        || field.attr.validator().is_some()
+        || field.attr.has_print_request_to_console()
+}
+
 /// One value push, with the model's outgoing directives applied. When no directive is set the
 /// value is pushed inline (no allocation); otherwise it is materialized into `__v` and
 /// transformed / validated / printed first.
@@ -245,7 +296,7 @@ fn generate_get_body(props: &HttpInputProperties) -> Result<TokenStream, syn::Er
     if let Some(fields) = &props.form_data_fields {
         let mut appends = Vec::with_capacity(fields.len());
         for field in fields {
-            appends.push(field_pushes(field, Sink::FormData)?);
+            appends.push(form_data_pushes(field)?);
         }
         return Ok(quote! {
             fn get_body<__TRnd: my_http_utils::schema::client::RandomStringGenerator>(self) -> Result<my_http_utils::body::HttpRequestBody, my_http_utils::schema::client::HttpRequestBuildError> {
