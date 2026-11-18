@@ -93,10 +93,14 @@ impl HttpBodyEncryptionKey {
     /// If the OS random source gives no salt. A body is never encrypted under a salt that is not
     /// fresh and random.
     pub fn encrypt(&self, plain: &[u8]) -> Vec<u8> {
-        let mut salt = [0u8; SALT_LEN];
-        getrandom::fill(&mut salt).expect("the OS random source gives no salt");
+        self.encrypt_under(&aes128gcm::random_salt(), plain)
+    }
 
-        aes128gcm::encrypt_with(&self.bytes[..], &salt, DEFAULT_RECORD_SIZE, &[], plain)
+    /// `plain` encrypted under `salt`, otherwise as [`encrypt`](Self::encrypt) does it. The caller
+    /// answers for the salt being fresh: [`EncryptedBody`](super::EncryptedBody) takes it from its
+    /// own caller.
+    pub(super) fn encrypt_under(&self, salt: &[u8; SALT_LEN], plain: &[u8]) -> Vec<u8> {
+        aes128gcm::encrypt_with(&self.bytes[..], salt, DEFAULT_RECORD_SIZE, &[], plain)
     }
 
     /// The plain text of `body`. All of the body or nothing: a record that fails its tag, a body

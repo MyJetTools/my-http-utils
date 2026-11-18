@@ -9,6 +9,10 @@
 //!   every key it holds, and encrypts its answer with the key that call hands back;
 //! - a service that serves data to my-reverse-proxy encrypts its answers with its current key.
 //!
+//! [`EncryptedBody`] is a body with the time it was sent: its plain text is the timestamp (8 bytes,
+//! little-endian) followed by the body, encrypted under a salt its caller gives, and it decrypts
+//! back to the salt, the timestamp and the body. An empty body is empty bytes both ways.
+//!
 //! A key is 32 random bytes written as standard base64, 44 characters: `openssl rand -base64 32`.
 //! A body is `salt(16) || rs(u32 BE) || idlen(1) || keyid || records`: the content key and the
 //! nonces come from the key and the salt through HKDF-SHA-256, and every record is AES-128-GCM.
@@ -17,17 +21,20 @@
 //! are the same ones): `docs/encrypted-service-data.md` in
 //! [my-reverse-proxy](https://github.com/my-jet-tools/my-reverse-proxy/blob/main/docs/encrypted-service-data.md).
 //!
-//! Not here, on purpose: streaming a body that comes in chunks, and replay protection (a `ts` in
-//! the plain text, remembered salts). Replay protection is the server's job.
+//! Not here, on purpose: streaming a body that comes in chunks, and replay protection itself
+//! (refusing an old timestamp, remembering salts). [`EncryptedBody`] carries what it takes; the
+//! checking is the server's job.
 
 mod aes128gcm;
+mod encrypted_body;
 mod errors;
 mod http_body_encryption_key;
 #[cfg(test)]
 mod test_vectors;
 
+pub use encrypted_body::*;
 pub use errors::*;
 pub use http_body_encryption_key::*;
 
-/// The value of `Content-Encoding` (and `Accept-Encoding`) for this encryption.
-pub const AES128GCM_CONTENT_ENCODING: &str = "aes128gcm";
+// Defined next to `HttpRequestBody::Encrypted`, which needs it without this feature too.
+pub use crate::body::AES128GCM_CONTENT_ENCODING;

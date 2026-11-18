@@ -28,7 +28,8 @@ impl std::fmt::Display for HttpBodyEncryptionKeyError {
 
 impl std::error::Error for HttpBodyEncryptionKeyError {}
 
-/// Why a body does not decrypt. The meanings are those of `OpenError` in my-reverse-proxy.
+/// Why a body does not decrypt. The first four mean what `OpenError` in my-reverse-proxy means;
+/// [`NoTimestamp`](Self::NoTimestamp) belongs to [`EncryptedBody`](super::EncryptedBody).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpBodyDecryptError {
     /// Too short, or a header no aes128gcm body has: the body is not encrypted this way.
@@ -40,6 +41,9 @@ pub enum HttpBodyDecryptError {
     CutShort,
     /// Something follows the last record, or a record has no delimiter.
     Malformed,
+    /// The body opens, but its plain text is shorter than the 8-byte timestamp an
+    /// [`EncryptedBody`](super::EncryptedBody) starts with.
+    NoTimestamp,
 }
 
 impl std::fmt::Display for HttpBodyDecryptError {
@@ -51,6 +55,9 @@ impl std::fmt::Display for HttpBodyDecryptError {
             }
             Self::CutShort => "the body ends without its last record: it is cut short",
             Self::Malformed => "the records are not laid out as aes128gcm lays them out",
+            Self::NoTimestamp => {
+                "the body opens but is shorter than the 8-byte timestamp it starts with"
+            }
         };
 
         f.write_str(text)

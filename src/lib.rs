@@ -60,7 +60,7 @@ pub mod http_input;
 pub mod encryption;
 #[cfg(feature = "encryption")]
 pub use encryption::{
-    HttpBodyDecryptError, HttpBodyEncryptionKey, HttpBodyEncryptionKeyError,
+    EncryptedBody, HttpBodyDecryptError, HttpBodyEncryptionKey, HttpBodyEncryptionKeyError,
     AES128GCM_CONTENT_ENCODING,
 };
 

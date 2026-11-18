@@ -35,6 +35,11 @@ encryption = [
     "dep:getrandom",
     "dep:base64",
 ]
+# Gzipped request bodies: `HttpRequestBody::compress` / `compress_with_level`. Off by default: whether
+# a body is compressed is decided at run time, so the linker can not drop the gzip code, and a wasm
+# client that never compresses would carry flate2 and crc32fast for nothing. Pure Rust, so unlike
+# `encryption` it builds for `wasm32-unknown-unknown` too.
+compression = ["dep:flate2"]
 
 [dependencies]
 rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
@@ -83,6 +88,11 @@ getrandom = { version = "*", optional = true }
 # into a buffer of our own lets the key bytes be wiped, on success and on a decode error alike.
 # Only `alloc` (`decode_vec`); the SIMD decoder is pointless for a 44-character key.
 base64 = { version = "*", default-features = false, features = ["alloc"], optional = true }
+
+# ---- `compression` feature only ----
+# Gzip of a request body. The pure-Rust backend (miniz_oxide) instead of zlib: no C toolchain, and it
+# compiles to wasm.
+flate2 = { version = "*", default-features = false, features = ["rust_backend"], optional = true }
 
 [dev-dependencies]
 # A runtime, for tests only. The library itself never needs one — it owns a channel, not a pump.

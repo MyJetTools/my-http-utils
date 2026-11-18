@@ -43,6 +43,16 @@ const LAST_DELIMITER: u8 = 0x02;
 const CONTENT_KEY_INFO: &[u8] = b"Content-Encoding: aes128gcm\0";
 const NONCE_INFO: &[u8] = b"Content-Encoding: nonce\0";
 
+/// A fresh salt from the OS random source.
+///
+/// Panics if the OS random source gives nothing: a body is never encrypted under a salt that is
+/// not fresh and random.
+pub fn random_salt() -> [u8; SALT_LEN] {
+    let mut salt = [0u8; SALT_LEN];
+    getrandom::fill(&mut salt).expect("the OS random source gives no salt");
+    salt
+}
+
 /// `plain`, encrypted with `ikm` under `salt`, in records of `record_size` bytes, with `key_id` in
 /// the header. No padding. A salt is never to be used twice with one key: the caller makes a fresh
 /// one for every body.

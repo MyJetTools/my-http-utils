@@ -34,10 +34,15 @@ the body-stream channel), so models compile to `wasm32-unknown-unknown`.
   shared between a client
   and a server names them, so they must compile for a wasm client too. Only the engine is gated.
 - `encryption` — [encrypted bodies](#encrypted-bodies-encryption-feature):
-  `HttpBodyEncryptionKey` and `Content-Encoding: aes128gcm` (RFC 8188), the one implementation
+  `HttpBodyEncryptionKey`, `EncryptedBody` (a body with its timestamp), `HttpRequestBody::encrypt`
+  and `Content-Encoding: aes128gcm` (RFC 8188), the one implementation
   fl-url, my-http-server and the services behind my-reverse-proxy share. Pure-Rust crates only
   (`aes-gcm`, `hkdf`, `sha2`, `zeroize`, `getrandom`, `base64`), so no C toolchain. **Native only:**
   with it the crate does not build for `wasm32-unknown-unknown` (see [wasm](#wasm)).
+- `compression` — gzipped request bodies: `HttpRequestBody::compress` / `compress_with_level`
+  (`CompressionLevel`), see [compressed and encrypted](#a-request-body-compressed-and-encrypted).
+  One crate, `flate2` on its pure-Rust backend, and it builds for `wasm32-unknown-unknown` too. Off
+  by default, so a wasm client that never compresses does not carry the gzip code.
 
 The one always-on dependency worth naming is `tokio` with **only** the `sync` feature: the mpsc
 channel behind [`HttpBodyAsStream`](#streaming-the-request-body). It is not feature-gated, because
@@ -228,7 +233,7 @@ type — both carry their own conversion and are unaffected.
 | type | what it's for |
 |---|---|
 | `my_http_utils::UrlBuilder` | build / inspect a URL (path segments + query, TCP or unix-socket) |
-| `my_http_utils::body::HttpRequestBody` | an outgoing body: `Json` / `UrlEncoded` / `FormData` / `Raw` / `Stream` / `Empty`. A transport must handle `Stream` (or check `is_stream()`) **before** `into_vec()` — a streamed body has no bytes to give, and `into_vec()` returns an empty `Vec` |
+| `my_http_utils::body::HttpRequestBody` | an outgoing body: `Json` / `UrlEncoded` / `FormData` / `Raw` / `Stream` / `Empty` / `Encoded`. A transport must handle `Stream` (or check `is_stream()`) **before** `into_vec()` — a streamed body has no bytes to give, and `into_vec()` returns an empty `Vec`. `Encoded` (made by `compress` / `encrypt`, the `compression` / `encryption` features) goes out with the headers of `get_headers()` (`Content-Encoding: gzip, aes128gcm`) and is not compressed again |
 | `my_http_utils::body::{FormDataBody, UrlEncodedBody}` | build `multipart/form-data` / `x-www-form-urlencoded` bodies |
 | `my_http_utils::url_encoded_data_reader::UrlEncodedDataReader` | read `x-www-form-urlencoded` (query strings / bodies) |
 | `my_http_utils::form_data_reader::{FormDataReader, FormDataPart, FormDataHeader}` | read `multipart/form-data`: every part as its header + content (`get_part` / `get_parts`), or the older value / file view (`get_optional` / `get_required`) |
@@ -461,8 +466,9 @@ nothing gives them back out: no `Display`, no `Serialize`, no accessor, and `Deb
 
 `HttpBodyDecryptError` is `NotEncrypted` (too short, or a header no aes128gcm body has),
 `WrongKeyOrDamaged` (a record does not open; also the error when `decrypt_with_any` gets no keys),
-`CutShort` (no last record) or `Malformed` (data after the last record, or a record with no
-delimiter).
+`CutShort` (no last record), `Malformed` (data after the last record, or a record with no
+delimiter) or `NoTimestamp` (an `EncryptedBody` that opens but is shorter than its 8-byte
+timestamp).
 
 ```rust
 use my_http_utils::encryption::{HttpBodyEncryptionKey, AES128GCM_CONTENT_ENCODING};
@@ -476,8 +482,77 @@ let (key, json) = HttpBodyEncryptionKey::decrypt_with_any(&keys, &body)?;
 let answer = key.encrypt(answer_json.as_bytes());
 ```
 
+**A body with its time: `EncryptedBody`.** `EncryptedBody { salt, timestamp, body }` has public
+fields, and `timestamp` is a `rust_extensions` `DateTimeAsMicroseconds`. It is encrypted as an
+ordinary aes128gcm body whose plain text is the timestamp followed by the body. The timestamp is an
+`i64` of unix microseconds in 8 little-endian bytes. The aes128gcm header starts with `salt`.
+
+- `body.encrypt(&key) -> Vec<u8>`: encrypted under `body.salt`, in records of 4096 bytes, with an
+  empty key id. An empty body gives empty bytes: nothing is encrypted.
+- `EncryptedBody::decrypt(bytes, &key) -> Result<EncryptedBody, HttpBodyDecryptError>`: gives back
+  the salt, the timestamp and the body. Empty bytes give an empty body with an all-zero salt and
+  timestamp 0 (1970). They open without any key, so an empty body proves nothing about who sent
+  it. A body that opens but is shorter than 8 bytes is `NoTimestamp`.
+- `EncryptedBody::random_salt()`: a fresh salt from the OS random source. The caller gives the salt,
+  so the caller keeps the rule: **never encrypt twice under one salt with one key**. Two bodies
+  under the same salt and key share their AES-GCM nonces. That gives both plain texts away and lets
+  anyone forge a body.
+- `Debug` prints the length of the body, never the body.
+
+The salt and the timestamp are what a server needs to refuse a replayed body. It refuses a timestamp
+too far from its own clock, and a salt it has already seen in that time.
+
+```rust
+use my_http_utils::encryption::EncryptedBody;
+use my_http_utils::rust_extensions::date_time::DateTimeAsMicroseconds;
+
+let bytes = EncryptedBody {
+    salt: EncryptedBody::random_salt(),
+    timestamp: DateTimeAsMicroseconds::now(),
+    body: json.into_bytes(),
+}
+.encrypt(&key);                       // send with Content-Encoding: aes128gcm
+
+let received = EncryptedBody::decrypt(&bytes, &key)?;
+// received.timestamp: recent enough?  received.salt: seen before?  received.body: the JSON
+```
+
 Not included: streaming encryption or decryption of a body that comes in chunks, and replay
-protection (a `ts` in the plain text, remembered salts). Replay protection is the server's job.
+protection itself (refusing an old timestamp, remembering salts). `EncryptedBody` carries what it
+takes. The checking is the server's job.
+
+### A request body, compressed and encrypted
+
+Make the body as usual, then call `.compress()` (the `compression` feature) and/or
+`.encrypt(&key)?` (the `encryption` feature) on it. Either one returns
+`HttpRequestBody::Encoded { data, content_type, headers }`:
+
+- `data` is what goes on the wire. After `encrypt` it is an `EncryptedBody` with a fresh salt and
+  the time now. After `compress().encrypt()`, the plain text inside it is the gzip.
+- `content_type` is the type of the body as it was made, so the receiver can read the body once it
+  has undone the encodings.
+- `headers` is what the transport adds to the request (`get_headers()`): `Content-Encoding` with the
+  encodings in the order they were applied, `gzip`, `aes128gcm` or `gzip, aes128gcm`.
+
+A transport sends `data` as it is, with that `Content-Type`, and adds the headers. A
+`Content-Encoding` of its own comes first on the same line. It does not compress the body again.
+
+- `compress()` gzips at `CompressionLevel::Default`, and `compress_with_level` takes `Fast`,
+  `Default` or `Best`. A body under 64 bytes only gets bigger gzipped, so it comes back as `Encoded`
+  with its bytes unchanged and no header. An empty body, a `Stream` and a body that is `Encoded`
+  already come back as they are. So `encrypt().compress()` leaves the encrypted body alone:
+  compress first.
+- `encrypt` leaves an empty body `Empty`. A `Stream`, and a body that is encrypted already, are not
+  supported. The error is the `HttpRequestBuildError` (`field` `"body"`) that `get_body` gives, so
+  the two chain with `?`.
+
+The `Encoded` variant itself is behind no feature, since it holds nothing but bytes and strings.
+Only `compress` and `encrypt` are.
+
+```rust
+let body = HttpRequestBody::as_json(&request).compress().encrypt(&key)?;
+let body = model.get_body::<Rnd>()?.encrypt(&key)?;
+```
 
 ## Examples
 
@@ -741,12 +816,18 @@ comes from `getrandom`, whose browser backend (`wasm_js`) getrandom asks librari
 so with `encryption` the crate does not build for `wasm32-unknown-unknown`. Builds without it are
 not affected.
 
+`compression` does build for wasm (`cargo build --target wasm32-unknown-unknown --features
+compression`): flate2's backend is pure Rust. It is a feature at all only so that a client that
+never compresses does not carry the gzip code.
+
 ## Tests
 
 ```sh
 cargo test --workspace --all-features   # everything
 cargo test                              # the client path, with NO features on
 cargo test --features encryption        # the encrypted bodies, with the RFC 8188 test vectors
+cargo test --features compression       # gzipped request bodies
+cargo test --features compression,encryption   # compress().encrypt()
 ```
 
 `--workspace` matters: the integration `tests` crate is a workspace member (not a dependency of the

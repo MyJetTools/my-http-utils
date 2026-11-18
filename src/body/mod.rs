@@ -4,3 +4,5 @@ mod url_encoded_body;
 pub use url_encoded_body::*;
 mod form_data_body;
 pub use form_data_body::*;
+mod compression;
+pub use compression::CompressionLevel;
