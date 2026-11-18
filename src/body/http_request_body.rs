@@ -4,11 +4,9 @@ use rust_extensions::StrOrString;
 use crate::body::CompressionLevel;
 use crate::body::{FormDataBody, UrlEncodedBody};
 #[cfg(feature = "encryption")]
+use crate::encryption::AES128GCM_CONTENT_ENCODING;
+#[cfg(feature = "encryption")]
 use crate::schema::client::HttpRequestBuildError;
-
-/// The `Content-Encoding` (and `Accept-Encoding`) token of an encrypted body: `aes128gcm`,
-/// RFC 8188.
-pub const AES128GCM_CONTENT_ENCODING: &str = "aes128gcm";
 
 /// The `Content-Encoding` token of a gzipped body.
 #[cfg(feature = "compression")]
@@ -43,6 +41,11 @@ pub enum HttpRequestBody {
     ///
     /// A transport does not compress it again: an encrypted body does not compress, and a
     /// compressed one is compressed already.
+    ///
+    /// The variant is there only with the `compression` or the `encryption` feature. A `match`
+    /// that names it has to be under the same `cfg`; one that does not should keep a wildcard
+    /// arm, since another crate in the build can switch a feature on.
+    #[cfg(any(feature = "compression", feature = "encryption"))]
     Encoded {
         data: Vec<u8>,
         content_type: Option<StrOrString<'static>>,
@@ -82,21 +85,27 @@ impl HttpRequestBody {
             // field, or the caller adds it on the transport (`with_header`).
             Self::Stream(_) => None,
             Self::Empty => None,
+            #[cfg(any(feature = "compression", feature = "encryption"))]
             Self::Encoded { content_type, .. } => content_type.clone(),
         }
     }
 
     /// The headers a transport adds to the request for this body, besides `Content-Type`: those
-    /// of an [`Self::Encoded`] body, none for the others. Read them, like the content type, before
+    /// of an `Encoded` body, none for the others. Read them, like the content type, before
     /// [`Self::into_vec`] consumes the body.
     ///
     /// `Content-Encoding` is a list: a transport that has one of its own already puts these after
     /// it on the same line (`br, gzip, aes128gcm`).
+    ///
+    /// There in every build, empty without the `compression` and `encryption` features, so a
+    /// transport calls it with no `cfg` of its own.
     pub fn get_headers(&self) -> &[(&'static str, String)] {
-        match self {
-            Self::Encoded { headers, .. } => headers,
-            _ => &[],
+        #[cfg(any(feature = "compression", feature = "encryption"))]
+        if let Self::Encoded { headers, .. } = self {
+            return headers;
         }
+
+        &[]
     }
 
     /// [`Self::compress_with_level`] at [`CompressionLevel::Default`].
@@ -219,7 +228,7 @@ impl HttpRequestBody {
     /// `Vec`, and a transport that ignores the variant silently sends an empty body instead of the
     /// payload. Use [`Self::is_stream`] to guard the call.
     ///
-    /// An [`Self::Encoded`] body gives its bytes as they go on the wire.
+    /// An `Encoded` body gives its bytes as they go on the wire.
     pub fn into_vec(self) -> Vec<u8> {
         match self {
             Self::Json(data) => data,
@@ -229,6 +238,7 @@ impl HttpRequestBody {
             // Not materialisable — the bytes live in the channel, not here.
             Self::Stream(_) => Vec::new(),
             Self::Empty => Vec::new(),
+            #[cfg(any(feature = "compression", feature = "encryption"))]
             Self::Encoded { data, .. } => data,
         }
     }
@@ -302,6 +312,7 @@ mod tests {
         [("Content-Encoding", value.to_string())]
     }
 
+    #[cfg(any(feature = "compression", feature = "encryption"))]
     #[test]
     fn an_encoded_body_goes_with_its_content_type_and_its_headers() {
         let body = HttpRequestBody::Encoded {

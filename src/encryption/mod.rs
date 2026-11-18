@@ -36,5 +36,5 @@ pub use encrypted_body::*;
 pub use errors::*;
 pub use http_body_encryption_key::*;
 
-// Defined next to `HttpRequestBody::Encrypted`, which needs it without this feature too.
-pub use crate::body::AES128GCM_CONTENT_ENCODING;
+/// The value of `Content-Encoding` (and `Accept-Encoding`) for this encryption.
+pub const AES128GCM_CONTENT_ENCODING: &str = "aes128gcm";

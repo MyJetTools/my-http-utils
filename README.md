@@ -546,8 +546,10 @@ A transport sends `data` as it is, with that `Content-Type`, and adds the header
   supported. The error is the `HttpRequestBuildError` (`field` `"body"`) that `get_body` gives, so
   the two chain with `?`.
 
-The `Encoded` variant itself is behind no feature, since it holds nothing but bytes and strings.
-Only `compress` and `encrypt` are.
+The `Encoded` variant is there only with `compression` or `encryption`. `get_headers()` is there in
+every build, empty without them, so a transport calls it with no `cfg` of its own. A `match` that
+names `Encoded` goes under the same `cfg`. One that does not keeps a wildcard arm, since another
+crate in the build can switch a feature on.
 
 ```rust
 let body = HttpRequestBody::as_json(&request).compress().encrypt(&key)?;
@@ -818,7 +820,7 @@ not affected.
 
 `compression` does build for wasm (`cargo build --target wasm32-unknown-unknown --features
 compression`): flate2's backend is pure Rust. It is a feature at all only so that a client that
-never compresses does not carry the gzip code.
+never compresses does not carry the gzip code. `HttpRequestBody::Encoded` comes with it.
 
 ## Tests
 
