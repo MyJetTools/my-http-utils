@@ -18,6 +18,23 @@ default = []
 # Note `http_input::HttpBodyAsStream` and its channel are NOT behind this feature: the same channel
 # streams an incoming body on the server and an outgoing one on the client, so both sides need it.
 server = ["http-request-schema-macros/server"]
+# Encrypted HTTP bodies: `Content-Encoding: aes128gcm` (RFC 8188) and `HttpBodyEncryptionKey`, the
+# one implementation fl-url, my-http-server and the services behind my-reverse-proxy share, so the
+# whole stack encrypts and decrypts the same way. Off by default; without it the crate builds
+# exactly as before. Pure-Rust crates only (no aws-lc-rs, no ring): it needs no C toolchain.
+#
+# NATIVE ONLY: with this feature the crate does not build for `wasm32-unknown-unknown`. The salt of
+# every body comes from `getrandom`, whose browser backend (`wasm_js`) getrandom asks libraries not
+# to switch on: that choice belongs to the final application. The default build is unaffected and
+# still builds for wasm.
+encryption = [
+    "dep:aes-gcm",
+    "dep:hkdf",
+    "dep:sha2",
+    "dep:zeroize",
+    "dep:getrandom",
+    "dep:base64",
+]
 
 [dependencies]
 rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
@@ -42,6 +59,30 @@ tokio = { version = "*", default-features = false, features = ["sync"] }
 # is a stream of bytes as well) needs the macro. Already in the tree through rust-extensions and
 # my-json, and a proc-macro, so it costs no build and nothing on wasm.
 async-trait = "*"
+
+# ---- `encryption` feature only: all optional, all pure Rust ----
+# AES-128-GCM, the cipher of every aes128gcm record. Default features off: they would bring
+# `getrandom` in through `aead` to make nonces, and RFC 8188 derives its nonces instead. `aes` is the
+# block cipher itself; `zeroize` wipes the expanded key (the AES key schedule) when a cipher drops.
+aes-gcm = { version = "*", default-features = false, features = [
+    "aes",
+    "zeroize",
+], optional = true }
+# HKDF-SHA-256: the content key (CEK) and the nonce base of a body, from the key and the body's salt.
+hkdf = { version = "*", optional = true }
+# The SHA-256 under HKDF. `alloc`/`oid` are not needed; `zeroize` makes `digest` wipe the HMAC
+# outputs and hash buffers HKDF works with (they come from the key) when they drop.
+sha2 = { version = "*", default-features = false, features = ["zeroize"], optional = true }
+# `Zeroizing`: the key, the derived CEK, the decoded base64 and every buffer that holds decrypted
+# plain text are wiped when they drop.
+zeroize = { version = "*", optional = true }
+# The OS random source, for the fresh 16-byte salt of every body. It is why `encryption` does not
+# build for wasm: see the feature.
+getrandom = { version = "*", optional = true }
+# Decodes a key from its base64. Used directly rather than through `rust-extensions/base64`: decoding
+# into a buffer of our own lets the key bytes be wiped, on success and on a decode error alike.
+# Only `alloc` (`decode_vec`); the SIMD decoder is pointless for a 44-character key.
+base64 = { version = "*", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 # A runtime, for tests only. The library itself never needs one — it owns a channel, not a pump.

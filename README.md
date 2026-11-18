@@ -33,6 +33,11 @@ the body-stream channel), so models compile to `wasm32-unknown-unknown`.
   `HttpBodyAsStream`, `HttpParseError`, `PasswordHttpInputField`) are **not** gated — a model
   shared between a client
   and a server names them, so they must compile for a wasm client too. Only the engine is gated.
+- `encryption` — [encrypted bodies](#encrypted-bodies-encryption-feature):
+  `HttpBodyEncryptionKey` and `Content-Encoding: aes128gcm` (RFC 8188), the one implementation
+  fl-url, my-http-server and the services behind my-reverse-proxy share. Pure-Rust crates only
+  (`aes-gcm`, `hkdf`, `sha2`, `zeroize`, `getrandom`, `base64`), so no C toolchain. **Native only:**
+  with it the crate does not build for `wasm32-unknown-unknown` (see [wasm](#wasm)).
 
 The one always-on dependency worth naming is `tokio` with **only** the `sync` feature: the mpsc
 channel behind [`HttpBodyAsStream`](#streaming-the-request-body). It is not feature-gated, because
@@ -416,6 +421,64 @@ through `f64`) and a `RawData` / `RawDataTyped` field gets the member's original
 parse it runs on the field's string form and its error becomes `HttpParseError::Validation`. Using
 one contract lets a single validator function serve both the client build and the server parse.
 
+## Encrypted bodies (`encryption` feature)
+
+`my_http_utils::encryption` (its items are re-exported at the crate root) encrypts an HTTP body
+with `Content-Encoding: aes128gcm`, [RFC 8188](https://www.rfc-editor.org/rfc/rfc8188). Every crate
+of the stack uses it, so they all encrypt and decrypt the same way:
+
+- **fl-url**: `FlUrl::encrypted(&key)` encrypts the request body and sends it with
+  `Content-Encoding: aes128gcm`.
+- **my-http-server**: opens a request that comes with `Content-Encoding: aes128gcm` with any key it
+  holds, and encrypts the answer with the key that opened the request.
+- **services that serve data to my-reverse-proxy**: encrypt their answers with their current key.
+
+The standard, byte by byte, with the test vectors every implementation passes:
+[`docs/encrypted-service-data.md`](https://github.com/my-jet-tools/my-reverse-proxy/blob/main/docs/encrypted-service-data.md)
+in my-reverse-proxy. The tests of this module are the same ones.
+
+**The key.** A key is 32 random bytes written as standard base64 (44 characters). Make one with
+`openssl rand -base64 32`. `HttpBodyEncryptionKey::from_base64` (or `str::parse`, or `TryFrom<&str>`)
+reads it and ignores whitespace around it, since a key pasted from a password manager often ends
+with a line break. `from_bytes` takes exactly 32 bytes. The bytes are wiped when the key drops, and
+nothing gives them back out: no `Display`, no `Serialize`, no accessor, and `Debug` prints
+`HttpBodyEncryptionKey(***)`. A bad key is a `HttpBodyEncryptionKeyError` (`NotBase64`, or
+`WrongLength { len }`). Its text says how to make a key and never repeats what it was given.
+
+**The calls.**
+
+- `key.encrypt(plain) -> Vec<u8>`: a fresh random salt from the OS for every body, records of 4096
+  bytes, an empty key id. An empty `plain` is still a valid body. Panics only if the OS random source
+  fails.
+- `key.decrypt(body) -> Result<Vec<u8>, HttpBodyDecryptError>`: all of the body or nothing. A record
+  that fails its tag, a body cut short, or anything after the last record refuses the whole body.
+- `HttpBodyEncryptionKey::decrypt_with_any(&keys, body) -> Result<(&key, Vec<u8>), _>`: tries each
+  key in order (several keys at once is how a key is rotated) and returns the key that opened the
+  body, so the server can answer with the same key. A wrong key fails on the first record, so each
+  extra key costs one record, never the whole body.
+- `AES128GCM_CONTENT_ENCODING` (`"aes128gcm"`): the value of `Content-Encoding`, and of
+  `Accept-Encoding` for a client that asks for an encrypted answer.
+
+`HttpBodyDecryptError` is `NotEncrypted` (too short, or a header no aes128gcm body has),
+`WrongKeyOrDamaged` (a record does not open; also the error when `decrypt_with_any` gets no keys),
+`CutShort` (no last record) or `Malformed` (data after the last record, or a record with no
+delimiter).
+
+```rust
+use my_http_utils::encryption::{HttpBodyEncryptionKey, AES128GCM_CONTENT_ENCODING};
+
+// client
+let key: HttpBodyEncryptionKey = settings.body_key.parse()?;
+let body = key.encrypt(json.as_bytes());   // send with Content-Encoding: AES128GCM_CONTENT_ENCODING
+
+// server: the old key and the new one while a key is rotated
+let (key, json) = HttpBodyEncryptionKey::decrypt_with_any(&keys, &body)?;
+let answer = key.encrypt(answer_json.as_bytes());
+```
+
+Not included: streaming encryption or decryption of a body that comes in chunks, and replay
+protection (a `ts` in the plain text, remembered salts). Replay protection is the server's job.
+
 ## Examples
 
 ### Describe a model
@@ -673,11 +736,17 @@ enable the feature. The only tokio in the tree is `tokio/sync` (`default-feature
 runtime, no mio and no transport, and is platform-independent. Verified with
 `cargo build --target wasm32-unknown-unknown`, both with and without `--features server`.
 
+The `encryption` feature is the exception: it is **native only**. The salt of every encrypted body
+comes from `getrandom`, whose browser backend (`wasm_js`) getrandom asks libraries not to turn on,
+so with `encryption` the crate does not build for `wasm32-unknown-unknown`. Builds without it are
+not affected.
+
 ## Tests
 
 ```sh
 cargo test --workspace --all-features   # everything
 cargo test                              # the client path, with NO features on
+cargo test --features encryption        # the encrypted bodies, with the RFC 8188 test vectors
 ```
 
 `--workspace` matters: the integration `tests` crate is a workspace member (not a dependency of the

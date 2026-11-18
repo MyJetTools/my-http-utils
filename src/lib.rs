@@ -53,6 +53,17 @@ pub use rust_extensions;
 // text in the crate-root scope, where the module's own items are not nameable.
 pub mod http_input;
 
+// Encrypted HTTP bodies (`Content-Encoding: aes128gcm`, RFC 8188) and the key they are encrypted
+// with, behind the `encryption` feature (native only). The module has its own docs in
+// `src/encryption/mod.rs`; a plain comment here for the same rustdoc reason as `http_input` above.
+#[cfg(feature = "encryption")]
+pub mod encryption;
+#[cfg(feature = "encryption")]
+pub use encryption::{
+    HttpBodyDecryptError, HttpBodyEncryptionKey, HttpBodyEncryptionKeyError,
+    AES128GCM_CONTENT_ENCODING,
+};
+
 /// Derive & attribute macros for HTTP request models (`MyHttpInput`, `MyHttpObjectStructure`,
 /// `MyHttpInputObjectStructure`, `MyHttpStringEnum`, `MyHttpIntegerEnum`, `http_input_field`).
 ///
